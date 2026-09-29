@@ -226,6 +226,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         };
 
         self.mark_engine_session_open(context);
+        crate::ui_client::publish_response_best_effort(&response);
 
         if response
             .effects
