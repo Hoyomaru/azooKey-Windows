@@ -68,10 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let pipe_name = "azookey-conversion";
-    tracing::info!(
-        "Starting conversion server on \\\\.\\pipe\\{}",
-        pipe_name
-    );
+    tracing::info!("Starting conversion server on \\\\.\\pipe\\{}", pipe_name);
 
     // EchoEngine intentionally preserves the current rewrite-branch behavior.
     // A Swift-backed azooKey Desktop engine will replace it behind EngineWorker.
@@ -97,7 +94,6 @@ mod tests {
     use tokio::time::Duration;
     use tonic::transport::Endpoint;
     use tower::service_fn;
-
 
     #[tokio::test]
     async fn test_versioned_engine_roundtrip() {
