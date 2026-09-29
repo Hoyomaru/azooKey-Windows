@@ -19,7 +19,9 @@ jobs:
         uses: arduino/setup-protoc@v3
 
       - name: Check formatting
-        run: rustfmt --edition 2021 --check src/conversion-server/src/main.rs src/conversion-server/src/engine_worker.rs
+        run: |
+          rustfmt --edition 2021 --config skip_children=true --check src/conversion-server/src/main.rs
+          rustfmt --edition 2021 --check src/conversion-server/src/engine_worker.rs
 
       - name: Test conversion server
         run: cargo test -p conversion-server
