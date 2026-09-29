@@ -160,9 +160,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Result<BOOL> {
-        let Some(context) = pic else {
+        if pic.is_none() {
             return Ok(false.into());
-        };
+        }
 
         let key = match NormalizedKeyEvent::from_windows(wparam, lparam) {
             Ok(key) => key,
