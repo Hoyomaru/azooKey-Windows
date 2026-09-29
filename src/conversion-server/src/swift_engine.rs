@@ -259,6 +259,11 @@ impl Drop for SwiftEngine {
 mod tests {
     use super::*;
     use crate::engine_worker::ConversionEngine;
+    use shared::windows_transport::{
+        WindowsTransportInputLanguage, WindowsTransportInputStyle,
+        WindowsTransportKeyEvent, WindowsTransportOperation, WindowsTransportRequest,
+        WindowsTransportResponse, WindowsTransportTextContext, WINDOWS_TRANSPORT_PROTOCOL_VERSION,
+    };
 
     #[test]
     #[ignore = "requires AzooKeyDesktopEngine.dll built by the Desktop fork"]
@@ -271,31 +276,83 @@ mod tests {
         );
 
         let mut engine = SwiftEngine::load_default().expect("failed to load Swift desktop engine");
+        let session_id = "rust-windows-transport-smoke".to_string();
+        let mut last_response = None;
 
-        let request = r#"{"type":"bridge-smoke","text":"かな漢字"}"#.to_string();
-        let response = engine
-            .handle(request.clone())
-            .expect("Swift bridge echo request failed");
-        assert_eq!(response, request);
+        for (offset, character) in ["へ", "ん", "か", "ん"].into_iter().enumerate() {
+            let request = WindowsTransportRequest {
+                protocol_version: WINDOWS_TRANSPORT_PROTOCOL_VERSION,
+                operation: WindowsTransportOperation::KeyEvent,
+                session_id: session_id.clone(),
+                key_event: Some(WindowsTransportKeyEvent {
+                    event_id: (offset + 1) as u64,
+                    core_key_code: 0,
+                    characters: Some(character.to_string()),
+                    characters_ignoring_modifiers: Some(character.to_string()),
+                    modifier_flags: 0,
+                    input_style: WindowsTransportInputStyle::Direct,
+                    input_language: WindowsTransportInputLanguage::Japanese,
+                    activate: offset == 0,
+                    live_conversion_enabled: false,
+                    enable_debug_window: false,
+                    enable_suggestion: false,
+                    enable_predictive_typing: false,
+                    enable_typo_correction: false,
+                    enable_option_direct_full_width_input: false,
+                    type_back_slash: false,
+                    option_direct_input_text: None,
+                    visible_candidate_start_index: 0,
+                    context: WindowsTransportTextContext::default(),
+                }),
+                candidate_index: None,
+                context: None,
+            };
 
-        let conversion_request =
-            r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#.to_string();
-        let conversion_response = engine
-            .handle(conversion_request.clone())
-            .expect("shared ConverterEngine smoke request failed");
+            let response_json = engine
+                .handle(serde_json::to_string(&request).unwrap())
+                .expect("shared ConverterEngine key event failed");
+            last_response = Some(
+                serde_json::from_str::<WindowsTransportResponse>(&response_json)
+                    .expect("Windows transport response was invalid"),
+            );
+        }
 
-        assert_ne!(conversion_response, conversion_request);
+        let response = last_response.expect("no Windows transport response");
+        assert!(response.handled);
+        assert_eq!(response.convert_target, "へんかん");
         assert!(
-            conversion_response.contains(r#""candidates":["#),
-            "response did not contain candidates: {conversion_response}"
+            !response.candidate_window.candidates.is_empty(),
+            "shared ConverterEngine returned no candidates"
         );
         assert!(
-            !conversion_response.contains(r#""candidates":[]"#),
-            "shared ConverterEngine returned no candidates: {conversion_response}"
+            response
+                .candidate_window
+                .candidates
+                .iter()
+                .any(|candidate| candidate.text == "変換"),
+            "expected 変換 candidate, got {:?}",
+            response
+                .candidate_window
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text.as_str())
+                .collect::<Vec<_>>()
         );
-        assert!(
-            conversion_response.contains(r#""convertTarget":"へんかん""#),
-            "shared ConverterEngine did not preserve convert target: {conversion_response}"
-        );
+
+        let close_request = WindowsTransportRequest {
+            protocol_version: WINDOWS_TRANSPORT_PROTOCOL_VERSION,
+            operation: WindowsTransportOperation::CloseSession,
+            session_id,
+            key_event: None,
+            candidate_index: None,
+            context: None,
+        };
+        let close_json = engine
+            .handle(serde_json::to_string(&close_request).unwrap())
+            .expect("shared ConverterEngine close-session failed");
+        let close_response: WindowsTransportResponse =
+            serde_json::from_str(&close_json).expect("close-session response was invalid");
+        assert!(close_response.handled);
+        assert!(close_response.is_empty);
     }
 }
