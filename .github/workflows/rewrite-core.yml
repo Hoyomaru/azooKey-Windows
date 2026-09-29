@@ -5,6 +5,7 @@ on:
     branches:
       - feature/desktop-core-integration
       - feature/shared-engine-integration
+      - feature/windows-transport-dto
   pull_request:
     branches:
       - upstream-rewrite
