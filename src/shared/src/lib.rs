@@ -3,3 +3,8 @@ pub mod conversion {
 }
 
 pub mod windows_transport;
+
+
+pub mod window {
+    tonic::include_proto!("window");
+}
