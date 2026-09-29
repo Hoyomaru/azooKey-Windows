@@ -185,7 +185,6 @@ impl Drop for SwiftEngine {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
