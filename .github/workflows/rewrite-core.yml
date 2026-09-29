@@ -25,7 +25,7 @@ jobs:
       - name: Check formatting
         run: |
           rustfmt --edition 2021 --config skip_children=true --check src/conversion-server/src/main.rs
-          rustfmt --edition 2021 --check src/conversion-server/src/engine_worker.rs
+          rustfmt --edition 2021 --check src/conversion-server/src/engine_worker.rs src/conversion-server/src/swift_engine.rs
 
       - name: Test conversion server
         run: cargo test -p conversion-server
