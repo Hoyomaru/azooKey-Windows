@@ -91,7 +91,17 @@ unsafe extern "C" fn engine_response_callback(
 
     let state = unsafe { Arc::from_raw(user_data.cast::<CallbackState>()) };
     let result = if status != 0 {
-        Err(format!("desktop engine returned status {status}"))
+        let detail = if response_ptr.is_null() || response_len == 0 {
+            None
+        } else {
+            Some(String::from_utf8_lossy(unsafe {
+                slice::from_raw_parts(response_ptr, response_len as usize)
+            }).into_owned())
+        };
+        Err(match detail {
+            Some(detail) => format!("desktop engine returned status {status}: {detail}"),
+            None => format!("desktop engine returned status {status}"),
+        })
     } else if response_len == 0 {
         Ok(Vec::new())
     } else if response_ptr.is_null() {
