@@ -1,0 +1,26 @@
+name: x86 TSF
+
+on:
+  push:
+    branches:
+      - feature/x86-tsf-ci
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-x86-tsf:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Add 32-bit Rust target
+        run: rustup target add i686-pc-windows-msvc
+
+      - name: Build 32-bit TSF DLL
+        run: cargo build -p tsf-core --target i686-pc-windows-msvc
