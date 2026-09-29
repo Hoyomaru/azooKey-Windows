@@ -43,7 +43,7 @@ fn create_pipe(name: &str, is_first_instance: bool) -> std::io::Result<NamedPipe
         .max_instances(2)
         .in_buffer_size(4096)
         .out_buffer_size(4096)
-        .reject_remote_clients(false);
+        .reject_remote_clients(true);
 
     let pipe_path = format!("\\\\.\\pipe\\{}", name);
 
