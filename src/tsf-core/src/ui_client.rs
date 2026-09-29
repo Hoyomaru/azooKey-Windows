@@ -44,6 +44,22 @@ pub fn publish_response_best_effort(
     });
 }
 
+pub fn publish_position_best_effort(caret_rect: (i32, i32, i32, i32)) {
+    runtime().spawn(async move {
+        if let Err(error) = publish_position(caret_rect).await {
+            tracing::debug!("Candidate UI position update unavailable: {error:?}");
+        }
+    });
+}
+
+pub fn hide_best_effort() {
+    runtime().spawn(async move {
+        if let Err(error) = hide().await {
+            tracing::debug!("Candidate UI hide unavailable: {error:?}");
+        }
+    });
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CandidateWindowUpdate {
     visible: bool,
@@ -130,6 +146,32 @@ async fn publish(update: CandidateWindowUpdate) -> Result<(), Box<dyn std::error
     }
 
     client.show(Empty {}).await?;
+    Ok(())
+}
+
+async fn publish_position(
+    caret_rect: (i32, i32, i32, i32),
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let channel = connect().await?;
+    let mut client = WindowServiceClient::new(channel);
+    let (top, left, bottom, right) = caret_rect;
+    client
+        .set_position(SetPositionRequest {
+            position: Some(WindowPosition {
+                top,
+                left,
+                bottom,
+                right,
+            }),
+        })
+        .await?;
+    Ok(())
+}
+
+async fn hide() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let channel = connect().await?;
+    let mut client = WindowServiceClient::new(channel);
+    client.hide(Empty {}).await?;
     Ok(())
 }
 
