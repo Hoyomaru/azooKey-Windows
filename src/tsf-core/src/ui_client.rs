@@ -8,7 +8,7 @@ use hyper_util::rt::TokioIo;
 use shared::{
     window::{
         window_service_client::WindowServiceClient, CandidateItem, Empty, SetCandidatesRequest,
-        SetSelectionRequest,
+        SetPositionRequest, SetSelectionRequest, WindowPosition,
     },
     windows_transport::WindowsTransportResponse,
 };
@@ -32,8 +32,11 @@ fn runtime() -> &'static Runtime {
     UI_RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create candidate UI runtime"))
 }
 
-pub fn publish_response_best_effort(response: &WindowsTransportResponse) {
-    let update = CandidateWindowUpdate::from_response(response);
+pub fn publish_response_best_effort(
+    response: &WindowsTransportResponse,
+    caret_rect: Option<(i32, i32, i32, i32)>,
+) {
+    let update = CandidateWindowUpdate::from_response(response, caret_rect);
     runtime().spawn(async move {
         if let Err(error) = publish(update).await {
             tracing::debug!("Candidate UI unavailable: {error:?}");
@@ -46,6 +49,7 @@ struct CandidateWindowUpdate {
     visible: bool,
     candidates: Vec<CandidateItemData>,
     selection_index: Option<i32>,
+    caret_rect: Option<(i32, i32, i32, i32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +59,10 @@ struct CandidateItemData {
 }
 
 impl CandidateWindowUpdate {
-    fn from_response(response: &WindowsTransportResponse) -> Self {
+    fn from_response(
+        response: &WindowsTransportResponse,
+        caret_rect: Option<(i32, i32, i32, i32)>,
+    ) -> Self {
         let visible = response.candidate_window.kind != "hidden"
             && !response.candidate_window.candidates.is_empty();
         let candidates = response
@@ -76,6 +83,7 @@ impl CandidateWindowUpdate {
             visible,
             candidates,
             selection_index,
+            caret_rect,
         }
     }
 }
@@ -105,6 +113,19 @@ async fn publish(update: CandidateWindowUpdate) -> Result<(), Box<dyn std::error
     if let Some(index) = update.selection_index {
         client
             .set_selection(SetSelectionRequest { index })
+            .await?;
+    }
+
+    if let Some((top, left, bottom, right)) = update.caret_rect {
+        client
+            .set_position(SetPositionRequest {
+                position: Some(WindowPosition {
+                    top,
+                    left,
+                    bottom,
+                    right,
+                }),
+            })
             .await?;
     }
 
@@ -188,17 +209,18 @@ mod tests {
 
     #[test]
     fn hides_when_candidate_window_is_hidden() {
-        let update = CandidateWindowUpdate::from_response(&response("hidden"));
+        let update = CandidateWindowUpdate::from_response(&response("hidden"), None);
         assert!(!update.visible);
         assert!(update.candidates.is_empty());
     }
 
     #[test]
     fn publishes_candidate_text_annotation_and_selection() {
-        let update = CandidateWindowUpdate::from_response(&response("composing"));
+        let update = CandidateWindowUpdate::from_response(&response("composing"), Some((10, 20, 30, 40)));
         assert!(update.visible);
         assert_eq!(update.candidates[0].text, "変換");
         assert_eq!(update.candidates[0].annotation, "名詞");
         assert_eq!(update.selection_index, Some(0));
+        assert_eq!(update.caret_rect, Some((10, 20, 30, 40)));
     }
 }
