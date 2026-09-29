@@ -28,3 +28,14 @@ thread and falls back safely when the DLL cannot be loaded or its ABI version is
 
 CI builds the Desktop fork on Windows and exercises a real Rust -> DLL -> Swift -> Rust
 roundtrip so the ABI boundary is tested independently from TSF.
+
+
+## Bridge smoke test
+
+The Windows CI builds `AzooKeyDesktopEngine.dll` from
+`Hoyomaru/azooKey-Desktop:feature/windows-shared-core` and loads it through the
+same `SwiftEngine` code used by `conversion-server`.
+
+The initial dictionary smoke request deliberately disables prediction, emoji
+replacement, and special candidate providers. This isolates the base
+AzooKeyKanaKanjiConverter path before optional desktop features are enabled.
