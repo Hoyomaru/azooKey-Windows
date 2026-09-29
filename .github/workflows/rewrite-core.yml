@@ -30,6 +30,9 @@ jobs:
           rustfmt --edition 2021 --check src/conversion-server/src/engine_worker.rs src/conversion-server/src/swift_engine.rs
           rustfmt --edition 2021 --config skip_children=true --check src/candidate-ui/src/main.rs
           rustfmt --edition 2021 --check src/candidate-ui/src/candidate.rs src/candidate-ui/src/pipe_stream.rs src/candidate-ui/src/utils.rs
+          rustfmt --edition 2021 --check src/tsf-core/src/client.rs src/tsf-core/src/ui_client.rs src/tsf-core/src/engine/key_event.rs
+          rustfmt --edition 2021 --check src/tsf-core/src/tsf/context.rs src/tsf-core/src/tsf/edit_session.rs src/tsf-core/src/tsf/key_event_sink.rs
+          rustfmt --edition 2021 --check src/tsf-core/src/tsf/text_input_processor.rs src/tsf-core/src/tsf/text_layout_sink.rs src/tsf-core/src/tsf/thread_mgr_event_sink.rs
 
       - name: Test conversion server
         run: cargo test -p conversion-server
