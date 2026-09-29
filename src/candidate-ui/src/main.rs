@@ -7,7 +7,7 @@ use tao::{
     dpi::{LogicalSize, PhysicalPosition},
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    platform::windows::WindowExtWindows,
+    platform::windows::{EventLoopBuilderExtWindows, WindowExtWindows},
 };
 use tokio::sync::mpsc;
 use tonic::{transport::Server, Request, Response, Status};
