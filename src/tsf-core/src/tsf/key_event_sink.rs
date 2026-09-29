@@ -18,28 +18,26 @@ use crate::{
     globals::GUID_DISPLAY_ATTRIBUTE,
 };
 
-use super::{edit_session::request_edit_session, text_service::TextService_Impl};
+use super::{
+    edit_session::{read_surrounding_text, request_edit_session},
+    text_service::TextService_Impl,
+};
 
 impl TextService_Impl {
+    fn is_actionable_key(key: &NormalizedKeyEvent) -> bool {
+        key.core_key_code != 0
+            || key.characters.is_some()
+            || key.characters_ignoring_modifiers.is_some()
+    }
+
     fn build_engine_request(
         &self,
         context: &ITfContext,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> anyhow::Result<Option<WindowsTransportRequest>> {
-        let key = NormalizedKeyEvent::from_windows(wparam, lparam)?;
-        if key.core_key_code == 0
-            && key.characters.is_none()
-            && key.characters_ignoring_modifiers.is_none()
-        {
-            return Ok(None);
-        }
-
+        key: NormalizedKeyEvent,
+        text_context: WindowsTransportTextContext,
+    ) -> Option<WindowsTransportRequest> {
         let contexts = self.contexts.borrow();
-        let state = match contexts.find(context) {
-            Some(state) => state,
-            None => return Ok(None),
-        };
+        let state = contexts.find(context)?;
 
         let activate = !state.is_engine_session_open();
         let event = key.into_transport(
@@ -47,17 +45,17 @@ impl TextService_Impl {
             WindowsTransportInputStyle::DefaultRomanToKana,
             WindowsTransportInputLanguage::Japanese,
             activate,
-            WindowsTransportTextContext::default(),
+            text_context,
         );
 
-        Ok(Some(WindowsTransportRequest {
+        Some(WindowsTransportRequest {
             protocol_version: WINDOWS_TRANSPORT_PROTOCOL_VERSION,
             operation: WindowsTransportOperation::KeyEvent,
             session_id: state.engine_session_id().to_string(),
             key_event: Some(event),
             candidate_index: None,
             context: None,
-        }))
+        })
     }
 
     fn mark_engine_session_open(&self, context: &ITfContext) {
@@ -166,10 +164,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             return Ok(false.into());
         };
 
-        match self.build_engine_request(context, wparam, lparam) {
-            Ok(Some(_)) => Ok(true.into()),
-            Ok(None) | Err(_) => Ok(false.into()),
-        }
+        let key = match NormalizedKeyEvent::from_windows(wparam, lparam) {
+            Ok(key) => key,
+            Err(_) => return Ok(false.into()),
+        };
+        Ok(Self::is_actionable_key(&key).into())
     }
 
     #[macros::anyhow(ignore_with = false.into())]
@@ -189,13 +188,32 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             return Ok(false.into());
         }
 
-        let request = match self.build_engine_request(context, wparam, lparam) {
-            Ok(Some(request)) => request,
-            Ok(None) => return Ok(false.into()),
+        let key = match NormalizedKeyEvent::from_windows(wparam, lparam) {
+            Ok(key) if Self::is_actionable_key(&key) => key,
+            Ok(_) => return Ok(false.into()),
             Err(error) => {
                 tracing::warn!("Failed to normalize key event: {error:?}");
                 return Ok(false.into());
             }
+        };
+
+        // Capture surrounding text in a short synchronous READ session, then release
+        // every TSF range before starting IPC or conversion work.
+        let (left, right) = match read_surrounding_text(context, tid, 200) {
+            Ok(context) => context,
+            Err(error) => {
+                tracing::debug!("Surrounding text unavailable: {error:?}");
+                (String::new(), String::new())
+            }
+        };
+        let text_context = WindowsTransportTextContext {
+            left: (!left.is_empty()).then_some(left),
+            right: (!right.is_empty()).then_some(right),
+        };
+
+        let request = match self.build_engine_request(context, key, text_context) {
+            Some(request) => request,
+            None => return Ok(false.into()),
         };
 
         // IPC is deliberately completed before requesting a TSF write EditSession.
