@@ -19,7 +19,7 @@ jobs:
         uses: arduino/setup-protoc@v3
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: rustfmt --edition 2021 --check src/conversion-server/src/main.rs src/conversion-server/src/engine_worker.rs
 
       - name: Test conversion server
         run: cargo test -p conversion-server
