@@ -5,4 +5,5 @@ members = [
   "src/shared",
   "src/macros",
   "src/conversion-server",
+  "src/candidate-ui",
 ]
