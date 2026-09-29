@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/desktop-core-integration
+      - feature/tsf-engine-request
   pull_request:
     branches:
       - upstream-rewrite
