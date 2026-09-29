@@ -69,6 +69,25 @@ pub fn handle(request: &WindowsTransportRequest) -> Result<WindowsTransportRespo
     })
 }
 
+/// Closes an engine session without blocking TSF context teardown.
+pub fn close_session_best_effort(session_id: String) {
+    let _ = std::thread::Builder::new()
+        .name("azookey-close-session".into())
+        .spawn(move || {
+            let request = WindowsTransportRequest {
+                protocol_version: WINDOWS_TRANSPORT_PROTOCOL_VERSION,
+                operation: shared::windows_transport::WindowsTransportOperation::CloseSession,
+                session_id,
+                key_event: None,
+                candidate_index: None,
+                context: None,
+            };
+            if let Err(error) = handle(&request) {
+                tracing::debug!("Failed to close shared engine session: {error:?}");
+            }
+        });
+}
+
 async fn connect_client() -> Result<ConversionServiceClient<tonic::transport::Channel>, ClientError> {
     let channel = time::timeout(
         CONNECT_TIMEOUT,
