@@ -199,11 +199,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
         // Capture surrounding text in a short synchronous READ session, then release
         // every TSF range before starting IPC or conversion work.
-        let (left, right) = match read_surrounding_text(context, tid, 200) {
+        let (left, right, caret_rect) = match read_surrounding_text(context, tid, 200) {
             Ok(context) => context,
             Err(error) => {
                 tracing::debug!("Surrounding text unavailable: {error:?}");
-                (String::new(), String::new())
+                (String::new(), String::new(), None)
             }
         };
         let text_context = WindowsTransportTextContext {
@@ -226,7 +226,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         };
 
         self.mark_engine_session_open(context);
-        crate::ui_client::publish_response_best_effort(&response);
+        crate::ui_client::publish_response_best_effort(&response, caret_rect);
 
         if response
             .effects
