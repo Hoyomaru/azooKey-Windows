@@ -168,6 +168,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         for session_id in session_ids {
             crate::client::close_session_best_effort(session_id);
         }
+        crate::ui_client::hide_best_effort();
 
         // clear display attribute
         self.display_attribute_atom.set(HashMap::new());
