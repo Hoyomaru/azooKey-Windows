@@ -1,7 +1,9 @@
 mod engine_worker;
 mod pipe_stream;
+mod swift_engine;
 
 use engine_worker::{EchoEngine, EngineWorker};
+use swift_engine::SwiftEngine;
 use shared::conversion::conversion_service_server::{ConversionService, ConversionServiceServer};
 use shared::conversion::{ConvertRequest, ConvertResponse, EngineRequest, EngineResponse};
 use tonic::{transport::Server, Request, Response, Status};
@@ -70,9 +72,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipe_name = "azookey-conversion";
     tracing::info!("Starting conversion server on \\\\.\\pipe\\{}", pipe_name);
 
-    // EchoEngine intentionally preserves the current rewrite-branch behavior.
-    // A Swift-backed azooKey Desktop engine will replace it behind EngineWorker.
-    let engine = EngineWorker::spawn(EchoEngine);
+    let engine = match SwiftEngine::load_default() {
+        Ok(engine) => {
+            tracing::info!("Loaded AzooKey Desktop Swift engine");
+            EngineWorker::spawn(engine)
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Swift desktop engine unavailable: {}; falling back to echo engine",
+                error
+            );
+            EngineWorker::spawn(EchoEngine)
+        }
+    };
     let stream = pipe_stream::create_pipe_stream(pipe_name);
     let svc = ConversionServiceServer::new(ConversionServiceImpl::new(engine));
 
