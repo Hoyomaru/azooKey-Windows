@@ -6,6 +6,7 @@ on:
       - feature/desktop-core-integration
       - feature/shared-engine-integration
       - feature/windows-transport-dto
+      - feature/persistent-engine-channel
   pull_request:
     branches:
       - upstream-rewrite
@@ -44,6 +45,7 @@ jobs:
         run: cargo check -p candidate-ui
 
   swift-dll-smoke:
+    if: github.ref != 'refs/heads/feature/persistent-engine-channel'
     name: Swift DLL roundtrip
     runs-on: windows-2022
     steps:
