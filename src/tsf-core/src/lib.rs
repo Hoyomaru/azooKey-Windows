@@ -1,3 +1,4 @@
+mod bridge_protocol;
 mod client;
 mod engine;
 mod extension;
