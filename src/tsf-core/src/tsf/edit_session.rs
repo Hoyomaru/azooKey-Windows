@@ -8,7 +8,7 @@ use anyhow::Result;
 use windows::{
     core::{implement, Interface},
     Win32::{
-        Foundation::E_FAIL,
+        Foundation::{BOOL, E_FAIL, RECT},
         UI::TextServices::{
             ITfComposition, ITfCompositionSink, ITfContext, ITfContextComposition, ITfEditSession,
             ITfEditSession_Impl, ITfInsertAtSelection, ITfRange, GUID_PROP_ATTRIBUTE, TF_AE_END,
@@ -136,6 +136,23 @@ impl<'a> ContextEditor<'a> {
     }
 
     #[macros::anyhow(fail_with = E_FAIL)]
+    pub fn get_caret_rect(&self) -> Result<(i32, i32, i32, i32)> {
+        let range = match self.get_selection_range()? {
+            Some(range) => range,
+            None => self.get_insertion_range()?,
+        };
+
+        unsafe {
+            range.Collapse(self.ec, TF_ANCHOR_END)?;
+            let view = self.context.GetActiveView()?;
+            let mut rect = RECT::default();
+            let mut clipped = BOOL::default();
+            view.GetTextExt(self.ec, &range, &mut rect, &mut clipped)?;
+            Ok((rect.top, rect.left, rect.bottom, rect.right))
+        }
+    }
+
+    #[macros::anyhow(fail_with = E_FAIL)]
     pub fn get_insertion_range(&self) -> Result<ITfRange> {
         unsafe {
             let insert_at: ITfInsertAtSelection = self.context.cast()?;
@@ -255,16 +272,21 @@ fn read_range_text(range: &ITfRange, ec: u32, max_utf16_units: i32) -> Result<St
     Ok(String::from_utf16_lossy(&buffer))
 }
 
+pub type CaretRect = (i32, i32, i32, i32);
+
 pub fn read_surrounding_text(
     context: &ITfContext,
     tid: u32,
     max_utf16_units: i32,
-) -> Result<(String, String)> {
-    let result: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
+) -> Result<(String, String, Option<CaretRect>)> {
+    let result: Rc<RefCell<Option<(String, String, Option<CaretRect>)>>> =
+        Rc::new(RefCell::new(None));
     let result_ref = Rc::clone(&result);
 
     request_read_edit_session(context, tid, move |editor| {
-        *result_ref.borrow_mut() = Some(editor.get_surrounding_text(max_utf16_units)?);
+        let (left, right) = editor.get_surrounding_text(max_utf16_units)?;
+        let caret_rect = editor.get_caret_rect().ok();
+        *result_ref.borrow_mut() = Some((left, right, caret_rect));
         Ok(())
     })?;
 
