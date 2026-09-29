@@ -40,6 +40,18 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
     #[macros::anyhow]
     fn OnPopContext(&self, pic: Option<&ITfContext>) -> Result<()> {
         if let Some(ctx) = pic {
+            let session_id = {
+                let contexts = self.contexts.borrow();
+                contexts
+                    .find(ctx)
+                    .filter(|state| state.is_engine_session_open())
+                    .map(|state| state.engine_session_id().to_string())
+            };
+
+            if let Some(session_id) = session_id {
+                crate::client::close_session_best_effort(session_id);
+            }
+
             self.contexts.borrow_mut().unregister(ctx)?;
         }
         Ok(())
