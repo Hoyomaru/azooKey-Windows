@@ -9,6 +9,10 @@ on:
       - upstream-rewrite
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-core:
     runs-on: windows-latest
