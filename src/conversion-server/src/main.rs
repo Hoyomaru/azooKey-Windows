@@ -1,10 +1,21 @@
+mod engine_worker;
 mod pipe_stream;
 
+use engine_worker::{EchoEngine, EngineWorker};
 use shared::conversion::conversion_service_server::{ConversionService, ConversionServiceServer};
 use shared::conversion::{ConvertRequest, ConvertResponse};
 use tonic::{transport::Server, Request, Response, Status};
 
-struct ConversionServiceImpl;
+#[derive(Clone)]
+struct ConversionServiceImpl {
+    engine: EngineWorker,
+}
+
+impl ConversionServiceImpl {
+    fn new(engine: EngineWorker) -> Self {
+        Self { engine }
+    }
+}
 
 #[tonic::async_trait]
 impl ConversionService for ConversionServiceImpl {
@@ -13,9 +24,14 @@ impl ConversionService for ConversionServiceImpl {
         request: Request<ConvertRequest>,
     ) -> Result<Response<ConvertResponse>, Status> {
         let text = request.into_inner().text;
-        tracing::info!("Received: {}", text);
+        let engine = self.engine.clone();
 
-        Ok(Response::new(ConvertResponse { text }))
+        let converted = tokio::task::spawn_blocking(move || engine.handle(text))
+            .await
+            .map_err(|error| Status::internal(format!("engine worker join failed: {error}")))?
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+
+        Ok(Response::new(ConvertResponse { text: converted }))
     }
 }
 
@@ -31,8 +47,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pipe_name
     );
 
+    // EchoEngine intentionally preserves the current rewrite-branch behavior.
+    // A Swift-backed azooKey Desktop engine will replace it behind EngineWorker.
+    let engine = EngineWorker::spawn(EchoEngine);
     let stream = pipe_stream::create_pipe_stream(pipe_name);
-    let svc = ConversionServiceServer::new(ConversionServiceImpl);
+    let svc = ConversionServiceServer::new(ConversionServiceImpl::new(engine));
 
     Server::builder()
         .add_service(svc)
@@ -45,12 +64,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    use hyper_util::rt::TokioIo;
     use shared::conversion::conversion_service_client::ConversionServiceClient;
     use shared::conversion::ConvertRequest;
     use tokio::net::windows::named_pipe::ClientOptions;
     use tokio::time::Duration;
     use tonic::transport::Endpoint;
-    use hyper_util::rt::TokioIo;
     use tower::service_fn;
 
     #[tokio::test]
@@ -58,7 +77,8 @@ mod tests {
         let pipe_name = format!("azookey-test-grpc-{}", std::process::id());
 
         let stream = pipe_stream::create_pipe_stream(&pipe_name);
-        let server = ConversionServiceServer::new(ConversionServiceImpl);
+        let engine = EngineWorker::spawn(EchoEngine);
+        let server = ConversionServiceServer::new(ConversionServiceImpl::new(engine));
         let server_handle = tokio::spawn(async move {
             Server::builder()
                 .add_service(server)
