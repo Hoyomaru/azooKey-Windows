@@ -92,11 +92,62 @@ mod tests {
     use super::*;
     use hyper_util::rt::TokioIo;
     use shared::conversion::conversion_service_client::ConversionServiceClient;
-    use shared::conversion::ConvertRequest;
+    use shared::conversion::{ConvertRequest, EngineRequest};
     use tokio::net::windows::named_pipe::ClientOptions;
     use tokio::time::Duration;
     use tonic::transport::Endpoint;
     use tower::service_fn;
+
+
+    #[tokio::test]
+    async fn test_versioned_engine_roundtrip() {
+        let pipe_name = format!("azookey-test-engine-{}", std::process::id());
+
+        let stream = pipe_stream::create_pipe_stream(&pipe_name);
+        let engine = EngineWorker::spawn(EchoEngine);
+        let server = ConversionServiceServer::new(ConversionServiceImpl::new(engine));
+        let server_handle = tokio::spawn(async move {
+            Server::builder()
+                .add_service(server)
+                .serve_with_incoming(stream)
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+        let channel = Endpoint::try_from("http://[::]:50051")
+            .unwrap()
+            .connect_with_connector(service_fn(move |_| {
+                let pipe_path = pipe_path.clone();
+                async move {
+                    let client = ClientOptions::new().open(&pipe_path)?;
+                    Ok::<_, std::io::Error>(TokioIo::new(client))
+                }
+            }))
+            .await
+            .unwrap();
+
+        let mut client = ConversionServiceClient::new(channel);
+        let payload = br#"{"type":"ping"}"#.to_vec();
+        let response = client
+            .handle(EngineRequest {
+                protocol_version: ConversionServiceImpl::ENGINE_PROTOCOL_VERSION,
+                payload: payload.clone(),
+            })
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(
+            response.protocol_version,
+            ConversionServiceImpl::ENGINE_PROTOCOL_VERSION
+        );
+        assert_eq!(response.payload, payload);
+
+        server_handle.abort();
+    }
 
     #[tokio::test]
     async fn test_grpc_roundtrip() {
