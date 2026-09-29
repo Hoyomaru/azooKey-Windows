@@ -133,6 +133,17 @@ impl ContextManager {
         }
     }
 
+    pub fn drain_open_engine_session_ids(&mut self) -> Vec<String> {
+        let session_ids = self
+            .registry
+            .values()
+            .filter(|state| state.is_engine_session_open())
+            .map(|state| state.engine_session_id().to_string())
+            .collect();
+        self.registry.clear();
+        session_ids
+    }
+
     pub fn clear(&mut self) {
         self.registry.clear();
     }
