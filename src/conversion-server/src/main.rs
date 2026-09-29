@@ -3,9 +3,9 @@ mod pipe_stream;
 mod swift_engine;
 
 use engine_worker::{EchoEngine, EngineWorker};
-use swift_engine::SwiftEngine;
 use shared::conversion::conversion_service_server::{ConversionService, ConversionServiceServer};
 use shared::conversion::{ConvertRequest, ConvertResponse, EngineRequest, EngineResponse};
+use swift_engine::SwiftEngine;
 use tonic::{transport::Server, Request, Response, Status};
 
 #[derive(Clone)]
