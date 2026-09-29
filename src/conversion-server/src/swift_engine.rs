@@ -2,8 +2,7 @@ use std::{
     ffi::{c_void, OsStr},
     os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
-    ptr,
-    slice,
+    ptr, slice,
 };
 
 use crate::engine_worker::ConversionEngine;
@@ -13,13 +12,7 @@ const DEFAULT_ENGINE_DLL: &str = "AzooKeyDesktopEngine.dll";
 
 type AbiVersionFn = unsafe extern "C" fn() -> u32;
 type CreateFn = unsafe extern "C" fn(*const u8, u32) -> *mut c_void;
-type HandleFn = unsafe extern "C" fn(
-    *mut c_void,
-    *const u8,
-    u32,
-    *mut *mut u8,
-    *mut u32,
-) -> i32;
+type HandleFn = unsafe extern "C" fn(*mut c_void, *const u8, u32, *mut *mut u8, *mut u32) -> i32;
 type FreeFn = unsafe extern "C" fn(*mut u8, u32);
 type DestroyFn = unsafe extern "C" fn(*mut c_void);
 
@@ -97,7 +90,9 @@ impl SwiftEngine {
                     .ok()
                     .and_then(|path| path.parent().map(|parent| parent.join(DEFAULT_ENGINE_DLL)))
             })
-            .ok_or_else(|| "could not resolve conversion-server executable directory".to_string())?;
+            .ok_or_else(|| {
+                "could not resolve conversion-server executable directory".to_string()
+            })?;
 
         Self::load(&path)
     }
@@ -168,12 +163,14 @@ impl ConversionEngine for SwiftEngine {
             return Err("desktop engine returned a null response buffer".into());
         }
 
-        let response = unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec();
+        let response =
+            unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec();
         unsafe {
             (self.free)(response_ptr, response_len);
         }
 
-        String::from_utf8(response).map_err(|error| format!("desktop engine returned invalid UTF-8: {error}"))
+        String::from_utf8(response)
+            .map_err(|error| format!("desktop engine returned invalid UTF-8: {error}"))
     }
 }
 
