@@ -176,7 +176,8 @@ async fn hide() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 async fn connect() -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {
-    let connect = Endpoint::try_from(DUMMY_URI)?.connect_with_connector(service_fn(|_| async {
+    let endpoint = Endpoint::try_from(DUMMY_URI)?;
+    let connect = endpoint.connect_with_connector(service_fn(|_| async {
         let started = Instant::now();
         loop {
             match ClientOptions::new().open(UI_PIPE_NAME) {
