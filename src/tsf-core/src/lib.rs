@@ -4,6 +4,7 @@ mod extension;
 mod globals;
 mod register;
 mod trace;
+mod ui_client;
 mod tsf;
 
 use std::{ffi::c_void, sync::Mutex};
