@@ -189,6 +189,26 @@ impl Drop for SwiftEngine {
 mod tests {
     use super::*;
     use crate::engine_worker::ConversionEngine;
+    use std::{
+        sync::mpsc,
+        thread,
+        time::Duration,
+    };
+
+    fn expect_stage(
+        receiver: &mpsc::Receiver<Result<&'static str, String>>,
+        expected: &'static str,
+        timeout: Duration,
+    ) {
+        match receiver.recv_timeout(timeout) {
+            Ok(Ok(stage)) => {
+                eprintln!("Swift bridge stage: {stage}");
+                assert_eq!(stage, expected);
+            }
+            Ok(Err(error)) => panic!("Swift bridge failed before {expected}: {error}"),
+            Err(error) => panic!("Swift bridge timed out waiting for {expected}: {error}"),
+        }
+    }
 
     #[test]
     #[ignore = "requires AzooKeyDesktopEngine.dll built by the Desktop fork"]
@@ -200,28 +220,73 @@ mod tests {
             "configured Swift engine DLL does not exist"
         );
 
-        let mut engine = SwiftEngine::load_default().expect("failed to load Swift desktop engine");
-        let request = r#"{"type":"bridge-smoke","text":"かな漢字"}"#.to_string();
-        let response = engine
-            .handle(request.clone())
-            .expect("Swift engine bridge request failed");
+        let (sender, receiver) = mpsc::channel::<Result<&'static str, String>>();
 
-        assert_eq!(response, request);
+        thread::spawn(move || {
+            let mut engine = match SwiftEngine::load_default() {
+                Ok(engine) => engine,
+                Err(error) => {
+                    let _ = sender.send(Err(format!("load/create: {error}")));
+                    return;
+                }
+            };
+            let _ = sender.send(Ok("engine-loaded"));
 
-        let conversion_request =
-            r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#.to_string();
-        let conversion_response = engine
-            .handle(conversion_request.clone())
-            .expect("Swift dictionary conversion failed");
+            let request = r#"{"type":"bridge-smoke","text":"かな漢字"}"#.to_string();
+            match engine.handle(request.clone()) {
+                Ok(response) if response == request => {
+                    let _ = sender.send(Ok("echo-roundtrip"));
+                }
+                Ok(response) => {
+                    let _ = sender.send(Err(format!(
+                        "echo response mismatch: {response}"
+                    )));
+                    return;
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(format!("echo request: {error}")));
+                    return;
+                }
+            }
 
-        assert_ne!(conversion_response, conversion_request);
-        assert!(
-            conversion_response.contains(r#""candidates":["#),
-            "conversion response did not contain candidates: {conversion_response}"
-        );
-        assert!(
-            !conversion_response.contains(r#""candidates":[]"#),
-            "dictionary conversion returned no candidates"
+            let conversion_request =
+                r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#.to_string();
+            let conversion_response = match engine.handle(conversion_request.clone()) {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = sender.send(Err(format!("dictionary conversion: {error}")));
+                    return;
+                }
+            };
+
+            if conversion_response == conversion_request {
+                let _ = sender.send(Err(
+                    "dictionary conversion returned the original request".to_string(),
+                ));
+                return;
+            }
+            if !conversion_response.contains(r#""candidates":["#) {
+                let _ = sender.send(Err(format!(
+                    "conversion response did not contain candidates: {conversion_response}"
+                )));
+                return;
+            }
+            if conversion_response.contains(r#""candidates":[]"#) {
+                let _ = sender.send(Err(
+                    "dictionary conversion returned no candidates".to_string(),
+                ));
+                return;
+            }
+
+            let _ = sender.send(Ok("dictionary-conversion"));
+        });
+
+        expect_stage(&receiver, "engine-loaded", Duration::from_secs(60));
+        expect_stage(&receiver, "echo-roundtrip", Duration::from_secs(30));
+        expect_stage(
+            &receiver,
+            "dictionary-conversion",
+            Duration::from_secs(60),
         );
     }
 }
