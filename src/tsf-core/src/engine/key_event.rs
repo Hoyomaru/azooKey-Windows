@@ -7,8 +7,9 @@ use windows::Win32::{
     Foundation::{LPARAM, WPARAM},
     UI::Input::KeyboardAndMouse::{
         GetKeyboardLayout, GetKeyboardState, ToUnicodeEx, VIRTUAL_KEY, VK_BACK, VK_CONTROL,
-        VK_DELETE, VK_DOWN, VK_ESCAPE, VK_F10, VK_F6, VK_F7, VK_F8, VK_F9, VK_LWIN, VK_MENU,
-        VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VK_LEFT,
+        VK_0, VK_1, VK_2, VK_3, VK_4, VK_5, VK_6, VK_7, VK_8, VK_9, VK_DECIMAL, VK_DELETE,
+        VK_DIVIDE, VK_DOWN, VK_ESCAPE, VK_F10, VK_F6, VK_F7, VK_F8, VK_F9, VK_LEFT, VK_LWIN,
+        VK_MENU, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SEPARATOR, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
     },
 };
 
@@ -143,6 +144,19 @@ fn core_key_code(key: VIRTUAL_KEY) -> u16 {
         VK_RIGHT => 124,
         VK_DOWN => 125,
         VK_UP => 126,
+        VK_DIVIDE => 0x4B,
+        VK_SEPARATOR => 0x5F,
+        VK_DECIMAL => 0x41,
+        VK_1 => 18,
+        VK_2 => 19,
+        VK_3 => 20,
+        VK_4 => 21,
+        VK_5 => 23,
+        VK_6 => 22,
+        VK_7 => 26,
+        VK_8 => 28,
+        VK_9 => 25,
+        VK_0 => 29,
         // Core deliberately treats its macOS forward-delete code as unsupported.
         VK_DELETE => 117,
         _ => 0,
@@ -181,12 +195,30 @@ fn translate_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_A, VK_1};
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_A;
 
     #[test]
-    fn printable_windows_virtual_keys_do_not_leak_into_core_key_codes() {
+    fn ordinary_printable_windows_virtual_keys_do_not_leak_into_core_key_codes() {
         assert_eq!(core_key_code(VK_A), 0);
-        assert_eq!(core_key_code(VK_1), 0);
+    }
+
+    #[test]
+    fn number_row_maps_to_desktop_candidate_selection_codes() {
+        let cases = [
+            (VK_1, 18),
+            (VK_2, 19),
+            (VK_3, 20),
+            (VK_4, 21),
+            (VK_5, 23),
+            (VK_6, 22),
+            (VK_7, 26),
+            (VK_8, 28),
+            (VK_9, 25),
+            (VK_0, 29),
+        ];
+        for (key, expected) in cases {
+            assert_eq!(core_key_code(key), expected);
+        }
     }
 
     #[test]
