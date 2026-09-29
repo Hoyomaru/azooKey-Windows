@@ -49,9 +49,10 @@ fn create_pipe(name: &str, first: bool) -> std::io::Result<NamedPipeServer> {
         .out_buffer_size(4096)
         .reject_remote_clients(true);
 
+    let pipe_path = format!(r"\\.\pipe\{name}");
     let result = unsafe {
         options.create_with_security_attributes_raw(
-            format!(r"\\.\pipe\{name}"),
+            &pipe_path,
             &mut attributes as *mut SECURITY_ATTRIBUTES as *mut _,
         )
     };
