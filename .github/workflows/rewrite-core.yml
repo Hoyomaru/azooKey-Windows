@@ -5,6 +5,7 @@ on:
     branches:
       - feature/desktop-core-integration
       - feature/shared-engine-integration
+      - feature/tsf-session-state
   pull_request:
     branches:
       - upstream-rewrite
