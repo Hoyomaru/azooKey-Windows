@@ -32,3 +32,39 @@ jobs:
 
       - name: Check TSF core
         run: cargo check -p tsf-core
+
+  swift-dll-smoke:
+    name: Swift DLL roundtrip
+    runs-on: windows-2022
+    steps:
+      - name: Checkout Windows integration
+        uses: actions/checkout@v4
+
+      - name: Checkout Desktop engine
+        uses: actions/checkout@v4
+        with:
+          repository: Hoyomaru/azooKey-Desktop
+          ref: feature/windows-shared-core
+          path: azookey-desktop
+
+      - name: Setup Swift 6.2
+        uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.2-release
+          tag: 6.2-RELEASE
+
+      - name: Build Swift desktop engine DLL
+        run: swift build --package-path azookey-desktop/Core --product AzooKeyDesktopEngine
+
+      - name: Locate Swift desktop engine DLL
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem azookey-desktop\Core\.build -Recurse -Filter AzooKeyDesktopEngine.dll | Select-Object -First 1
+          if (-not $dll) { throw "AzooKeyDesktopEngine.dll was not produced" }
+          "AZOOKEY_DESKTOP_ENGINE_DLL=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Run Swift DLL roundtrip
+        run: cargo test -p conversion-server swift_engine_dll_roundtrip -- --ignored --nocapture
