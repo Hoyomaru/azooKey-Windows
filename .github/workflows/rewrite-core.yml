@@ -70,4 +70,5 @@ jobs:
         uses: arduino/setup-protoc@v3
 
       - name: Run Swift DLL roundtrip
+        timeout-minutes: 4
         run: cargo test -p conversion-server swift_engine_dll_roundtrip -- --ignored --nocapture
