@@ -1,19 +1,24 @@
 use std::{
     ffi::{c_void, OsStr},
+    fs,
     os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
-    ptr, slice,
+    slice,
+    sync::{Arc, Condvar, Mutex},
+    time::Duration,
 };
 
 use crate::engine_worker::ConversionEngine;
 
-const ENGINE_ABI_VERSION: u32 = 1;
+const ENGINE_ABI_VERSION: u32 = 2;
 const DEFAULT_ENGINE_DLL: &str = "AzooKeyDesktopEngine.dll";
+const ENGINE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 type AbiVersionFn = unsafe extern "C" fn() -> u32;
 type CreateFn = unsafe extern "C" fn(*const u8, u32) -> *mut c_void;
-type HandleFn = unsafe extern "C" fn(*mut c_void, *const u8, u32, *mut *mut u8, *mut u32) -> i32;
-type FreeFn = unsafe extern "C" fn(*mut u8, u32);
+type ResponseCallback = unsafe extern "C" fn(*mut c_void, i32, *const u8, u32);
+type HandleAsyncFn =
+    unsafe extern "C" fn(*mut c_void, *const u8, u32, ResponseCallback, *mut c_void);
 type DestroyFn = unsafe extern "C" fn(*mut c_void);
 
 #[link(name = "kernel32")]
@@ -58,20 +63,58 @@ impl DynamicLibrary {
     }
 }
 
-// Swift's Windows runtime is not safe to unload from an arbitrary worker thread.
-// The conversion server owns exactly one engine DLL for its whole process lifetime,
-// so intentionally keep the module loaded and let Windows release it at process exit.
-// Calling FreeLibrary here can deadlock during Swift runtime teardown.
+// Swift's Windows runtime is intentionally kept loaded for the whole conversion-server
+// lifetime. Calling FreeLibrary during Swift runtime teardown can deadlock.
+struct CallbackState {
+    result: Mutex<Option<Result<Vec<u8>, String>>>,
+    ready: Condvar,
+}
+
+impl CallbackState {
+    fn new() -> Self {
+        Self {
+            result: Mutex::new(None),
+            ready: Condvar::new(),
+        }
+    }
+}
+
+unsafe extern "C" fn engine_response_callback(
+    user_data: *mut c_void,
+    status: i32,
+    response_ptr: *const u8,
+    response_len: u32,
+) {
+    if user_data.is_null() {
+        return;
+    }
+
+    let state = unsafe { Arc::from_raw(user_data.cast::<CallbackState>()) };
+    let result = if status != 0 {
+        Err(format!("desktop engine returned status {status}"))
+    } else if response_len == 0 {
+        Ok(Vec::new())
+    } else if response_ptr.is_null() {
+        Err("desktop engine returned a null response buffer".into())
+    } else {
+        Ok(unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec())
+    };
+
+    if let Ok(mut guard) = state.result.lock() {
+        *guard = Some(result);
+        state.ready.notify_one();
+    }
+}
+
 pub struct SwiftEngine {
     _library: DynamicLibrary,
     context: *mut c_void,
-    handle: HandleFn,
-    free: FreeFn,
+    handle_async: HandleAsyncFn,
     destroy: DestroyFn,
 }
 
-// The engine instance is moved once onto EngineWorker's dedicated thread and all
-// calls are serialized there. The raw context never crosses between worker threads.
+// EngineWorker moves this object once onto one dedicated thread. Every request is
+// serialized there; callbacks only copy the returned bytes and wake that thread.
 unsafe impl Send for SwiftEngine {}
 
 impl SwiftEngine {
@@ -97,10 +140,8 @@ impl SwiftEngine {
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_abi_version\0")?) };
         let create: CreateFn =
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_create\0")?) };
-        let handle: HandleFn =
-            unsafe { std::mem::transmute(library.symbol(b"azookey_engine_handle\0")?) };
-        let free: FreeFn =
-            unsafe { std::mem::transmute(library.symbol(b"azookey_engine_free\0")?) };
+        let handle_async: HandleAsyncFn =
+            unsafe { std::mem::transmute(library.symbol(b"azookey_engine_handle_async\0")?) };
         let destroy: DestroyFn =
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_destroy\0")?) };
 
@@ -111,7 +152,7 @@ impl SwiftEngine {
             ));
         }
 
-        let configuration = br#"{"protocolVersion":1}"#;
+        let configuration = Self::configuration(path)?;
         let context = unsafe { create(configuration.as_ptr(), configuration.len() as u32) };
         if context.is_null() {
             return Err("desktop engine initialization failed".into());
@@ -120,10 +161,39 @@ impl SwiftEngine {
         Ok(Self {
             _library: library,
             context,
-            handle,
-            free,
+            handle_async,
             destroy,
         })
+    }
+
+    fn configuration(dll_path: &Path) -> Result<Vec<u8>, String> {
+        let data_root = std::env::var_os("AZOOKEY_ENGINE_DATA_DIR")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("LOCALAPPDATA")
+                    .map(PathBuf::from)
+                    .map(|path| path.join("azooKey"))
+            })
+            .unwrap_or_else(|| std::env::temp_dir().join("azooKey"));
+
+        let memory_directory = data_root.join("Memory");
+        let shared_directory = data_root.join("Shared");
+        fs::create_dir_all(&memory_directory)
+            .map_err(|error| format!("failed to create engine memory directory: {error}"))?;
+        fs::create_dir_all(&shared_directory)
+            .map_err(|error| format!("failed to create engine shared directory: {error}"))?;
+
+        let resources_directory = dll_path.parent().unwrap_or(Path::new("."));
+        let json = serde_json::json!({
+            "protocolVersion": ENGINE_ABI_VERSION,
+            "applicationSupportDirectory": data_root.to_string_lossy(),
+            "memoryDirectory": memory_directory.to_string_lossy(),
+            "resourcesDirectory": resources_directory.to_string_lossy(),
+            "sharedContainerDirectory": shared_directory.to_string_lossy(),
+        });
+
+        serde_json::to_vec(&json)
+            .map_err(|error| format!("failed to encode desktop engine configuration: {error}"))
     }
 }
 
@@ -133,34 +203,38 @@ impl ConversionEngine for SwiftEngine {
             return Err("engine request exceeds 4 GiB ABI limit".into());
         }
 
-        let mut response_ptr: *mut u8 = ptr::null_mut();
-        let mut response_len = 0_u32;
-        let status = unsafe {
-            (self.handle)(
+        let state = Arc::new(CallbackState::new());
+        let callback_state = Arc::into_raw(Arc::clone(&state)) as *mut c_void;
+
+        unsafe {
+            (self.handle_async)(
                 self.context,
                 request.as_ptr(),
                 request.len() as u32,
-                &mut response_ptr,
-                &mut response_len,
-            )
-        };
-
-        if status != 0 {
-            return Err(format!("desktop engine returned status {status}"));
+                engine_response_callback,
+                callback_state,
+            );
         }
 
-        if response_len == 0 {
-            return Ok(String::new());
-        }
-        if response_ptr.is_null() {
-            return Err("desktop engine returned a null response buffer".into());
+        let guard = state
+            .result
+            .lock()
+            .map_err(|_| "desktop engine callback lock poisoned".to_string())?;
+        let (mut guard, wait) = state
+            .ready
+            .wait_timeout_while(guard, ENGINE_RESPONSE_TIMEOUT, |result| result.is_none())
+            .map_err(|_| "desktop engine callback wait poisoned".to_string())?;
+
+        if wait.timed_out() && guard.is_none() {
+            return Err(format!(
+                "desktop engine response timed out after {} seconds",
+                ENGINE_RESPONSE_TIMEOUT.as_secs()
+            ));
         }
 
-        let response =
-            unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec();
-        unsafe {
-            (self.free)(response_ptr, response_len);
-        }
+        let response = guard
+            .take()
+            .ok_or_else(|| "desktop engine callback completed without a response".to_string())??;
 
         String::from_utf8(response)
             .map_err(|error| format!("desktop engine returned invalid UTF-8: {error}"))
@@ -173,7 +247,7 @@ impl Drop for SwiftEngine {
             unsafe {
                 (self.destroy)(self.context);
             }
-            self.context = ptr::null_mut();
+            self.context = std::ptr::null_mut();
         }
     }
 }
@@ -182,22 +256,6 @@ impl Drop for SwiftEngine {
 mod tests {
     use super::*;
     use crate::engine_worker::ConversionEngine;
-    use std::{sync::mpsc, thread, time::Duration};
-
-    fn expect_stage(
-        receiver: &mpsc::Receiver<Result<&'static str, String>>,
-        expected: &'static str,
-        timeout: Duration,
-    ) {
-        match receiver.recv_timeout(timeout) {
-            Ok(Ok(stage)) => {
-                eprintln!("Swift bridge stage: {stage}");
-                assert_eq!(stage, expected);
-            }
-            Ok(Err(error)) => panic!("Swift bridge failed before {expected}: {error}"),
-            Err(error) => panic!("Swift bridge timed out waiting for {expected}: {error}"),
-        }
-    }
 
     #[test]
     #[ignore = "requires AzooKeyDesktopEngine.dll built by the Desktop fork"]
@@ -209,68 +267,32 @@ mod tests {
             "configured Swift engine DLL does not exist"
         );
 
-        let (sender, receiver) = mpsc::channel::<Result<&'static str, String>>();
+        let mut engine = SwiftEngine::load_default().expect("failed to load Swift desktop engine");
 
-        thread::spawn(move || {
-            let mut engine = match SwiftEngine::load_default() {
-                Ok(engine) => engine,
-                Err(error) => {
-                    let _ = sender.send(Err(format!("load/create: {error}")));
-                    return;
-                }
-            };
-            let _ = sender.send(Ok("engine-loaded"));
+        let request = r#"{"type":"bridge-smoke","text":"かな漢字"}"#.to_string();
+        let response = engine
+            .handle(request.clone())
+            .expect("Swift bridge echo request failed");
+        assert_eq!(response, request);
 
-            let request = r#"{"type":"bridge-smoke","text":"かな漢字"}"#.to_string();
-            match engine.handle(request.clone()) {
-                Ok(response) if response == request => {
-                    let _ = sender.send(Ok("echo-roundtrip"));
-                }
-                Ok(response) => {
-                    let _ = sender.send(Err(format!("echo response mismatch: {response}")));
-                    return;
-                }
-                Err(error) => {
-                    let _ = sender.send(Err(format!("echo request: {error}")));
-                    return;
-                }
-            }
+        let conversion_request =
+            r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#.to_string();
+        let conversion_response = engine
+            .handle(conversion_request.clone())
+            .expect("shared ConverterEngine smoke request failed");
 
-            let conversion_request =
-                r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#
-                    .to_string();
-            let conversion_response = match engine.handle(conversion_request.clone()) {
-                Ok(response) => response,
-                Err(error) => {
-                    let _ = sender.send(Err(format!("dictionary conversion: {error}")));
-                    return;
-                }
-            };
-
-            if conversion_response == conversion_request {
-                let _ = sender.send(Err(
-                    "dictionary conversion returned the original request".to_string()
-                ));
-                return;
-            }
-            if !conversion_response.contains(r#""candidates":["#) {
-                let _ = sender.send(Err(format!(
-                    "conversion response did not contain candidates: {conversion_response}"
-                )));
-                return;
-            }
-            if conversion_response.contains(r#""candidates":[]"#) {
-                let _ = sender.send(Err(
-                    "dictionary conversion returned no candidates".to_string()
-                ));
-                return;
-            }
-
-            let _ = sender.send(Ok("dictionary-conversion"));
-        });
-
-        expect_stage(&receiver, "engine-loaded", Duration::from_secs(60));
-        expect_stage(&receiver, "echo-roundtrip", Duration::from_secs(30));
-        expect_stage(&receiver, "dictionary-conversion", Duration::from_secs(60));
+        assert_ne!(conversion_response, conversion_request);
+        assert!(
+            conversion_response.contains(r#""candidates":["#),
+            "response did not contain candidates: {conversion_response}"
+        );
+        assert!(
+            !conversion_response.contains(r#""candidates":[]"#),
+            "shared ConverterEngine returned no candidates: {conversion_response}"
+        );
+        assert!(
+            conversion_response.contains(r#""convertTarget":"へんかん""#),
+            "shared ConverterEngine did not preserve convert target: {conversion_response}"
+        );
     }
 }
