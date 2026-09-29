@@ -260,9 +260,9 @@ mod tests {
     use super::*;
     use crate::engine_worker::ConversionEngine;
     use shared::windows_transport::{
-        WindowsTransportInputLanguage, WindowsTransportInputStyle,
-        WindowsTransportKeyEvent, WindowsTransportOperation, WindowsTransportRequest,
-        WindowsTransportResponse, WindowsTransportTextContext, WINDOWS_TRANSPORT_PROTOCOL_VERSION,
+        WindowsTransportInputLanguage, WindowsTransportInputStyle, WindowsTransportKeyEvent,
+        WindowsTransportOperation, WindowsTransportRequest, WindowsTransportResponse,
+        WindowsTransportTextContext, WINDOWS_TRANSPORT_PROTOCOL_VERSION,
     };
 
     #[test]
