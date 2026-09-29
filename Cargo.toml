@@ -6,4 +6,5 @@ members = [
   "src/macros",
   "src/conversion-server",
   "src/candidate-ui",
+  "src/azookey-host",
 ]
