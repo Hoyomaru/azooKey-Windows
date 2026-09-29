@@ -13,13 +13,8 @@ const DEFAULT_ENGINE_DLL: &str = "AzooKeyDesktopEngine.dll";
 type AbiVersionFn = unsafe extern "C" fn() -> u32;
 type CreateFn = unsafe extern "C" fn(*const u8, u32) -> *mut c_void;
 type ResponseCallback = unsafe extern "C" fn(*mut c_void, i32, *const u8, u32);
-type HandleAsyncFn = unsafe extern "C" fn(
-    *mut c_void,
-    *const u8,
-    u32,
-    Option<ResponseCallback>,
-    *mut c_void,
-);
+type HandleAsyncFn =
+    unsafe extern "C" fn(*mut c_void, *const u8, u32, Option<ResponseCallback>, *mut c_void);
 type DestroyFn = unsafe extern "C" fn(*mut c_void);
 
 #[link(name = "kernel32")]
@@ -102,9 +97,8 @@ impl SwiftEngine {
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_abi_version\0")?) };
         let create: CreateFn =
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_create\0")?) };
-        let handle_async: HandleAsyncFn = unsafe {
-            std::mem::transmute(library.symbol(b"azookey_engine_handle_async\0")?)
-        };
+        let handle_async: HandleAsyncFn =
+            unsafe { std::mem::transmute(library.symbol(b"azookey_engine_handle_async\0")?) };
         let destroy: DestroyFn =
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_destroy\0")?) };
 
@@ -152,9 +146,7 @@ impl ConversionEngine for SwiftEngine {
             }
 
             let sender = unsafe {
-                Box::from_raw(
-                    user_data.cast::<std::sync::mpsc::Sender<Result<Vec<u8>, String>>>()
-                )
+                Box::from_raw(user_data.cast::<std::sync::mpsc::Sender<Result<Vec<u8>, String>>>())
             };
 
             let result = if status != 0 {
@@ -164,10 +156,7 @@ impl ConversionEngine for SwiftEngine {
             } else if response_ptr.is_null() {
                 Err("desktop engine returned a null response buffer".into())
             } else {
-                Ok(
-                    unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }
-                        .to_vec()
-                )
+                Ok(unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec())
             };
 
             let _ = sender.send(result);
