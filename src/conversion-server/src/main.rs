@@ -3,7 +3,7 @@ mod pipe_stream;
 
 use engine_worker::{EchoEngine, EngineWorker};
 use shared::conversion::conversion_service_server::{ConversionService, ConversionServiceServer};
-use shared::conversion::{ConvertRequest, ConvertResponse};
+use shared::conversion::{ConvertRequest, ConvertResponse, EngineRequest, EngineResponse};
 use tonic::{transport::Server, Request, Response, Status};
 
 #[derive(Clone)]
@@ -12,8 +12,18 @@ struct ConversionServiceImpl {
 }
 
 impl ConversionServiceImpl {
+    const ENGINE_PROTOCOL_VERSION: u32 = 1;
+
     fn new(engine: EngineWorker) -> Self {
         Self { engine }
+    }
+
+    async fn run_engine(&self, payload: String) -> Result<String, Status> {
+        let engine = self.engine.clone();
+        tokio::task::spawn_blocking(move || engine.handle(payload))
+            .await
+            .map_err(|error| Status::internal(format!("engine worker join failed: {error}")))?
+            .map_err(|error| Status::unavailable(error.to_string()))
     }
 }
 
@@ -24,14 +34,30 @@ impl ConversionService for ConversionServiceImpl {
         request: Request<ConvertRequest>,
     ) -> Result<Response<ConvertResponse>, Status> {
         let text = request.into_inner().text;
-        let engine = self.engine.clone();
-
-        let converted = tokio::task::spawn_blocking(move || engine.handle(text))
-            .await
-            .map_err(|error| Status::internal(format!("engine worker join failed: {error}")))?
-            .map_err(|error| Status::unavailable(error.to_string()))?;
-
+        let converted = self.run_engine(text).await?;
         Ok(Response::new(ConvertResponse { text: converted }))
+    }
+
+    async fn handle(
+        &self,
+        request: Request<EngineRequest>,
+    ) -> Result<Response<EngineResponse>, Status> {
+        let request = request.into_inner();
+        if request.protocol_version != Self::ENGINE_PROTOCOL_VERSION {
+            return Err(Status::failed_precondition(format!(
+                "unsupported engine protocol version: {}",
+                request.protocol_version
+            )));
+        }
+
+        let payload = String::from_utf8(request.payload)
+            .map_err(|_| Status::invalid_argument("engine payload must be UTF-8 JSON"))?;
+        let payload = self.run_engine(payload).await?;
+
+        Ok(Response::new(EngineResponse {
+            protocol_version: Self::ENGINE_PROTOCOL_VERSION,
+            payload: payload.into_bytes(),
+        }))
     }
 }
 
