@@ -268,9 +268,8 @@ pub fn read_surrounding_text(
         Ok(())
     })?;
 
-    result
-        .borrow_mut()
-        .take()
+    let surrounding_text = result.borrow_mut().take();
+    surrounding_text
         .ok_or_else(|| anyhow::anyhow!("read EditSession did not run synchronously"))
 }
 
