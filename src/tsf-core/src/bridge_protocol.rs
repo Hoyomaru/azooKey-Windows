@@ -25,8 +25,11 @@ pub enum WindowsBridgeInputStyle {
     Direct,
     Roman2kana,
     DefaultRomanToKana,
+    #[serde(rename = "defaultAZIK")]
     DefaultAzik,
+    #[serde(rename = "defaultKanaUS")]
     DefaultKanaUs,
+    #[serde(rename = "defaultKanaJIS")]
     DefaultKanaJis,
     Empty,
 }
@@ -41,6 +44,7 @@ pub struct WindowsBridgeTextContext {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowsBridgeKeyEvent {
+    #[serde(rename = "eventID")]
     pub event_id: u64,
     pub modifier_flags: i32,
     pub characters: Option<String>,
@@ -53,6 +57,7 @@ pub struct WindowsBridgeKeyEvent {
 pub struct WindowsBridgeRequest {
     pub windows_bridge_version: u32,
     pub operation: WindowsBridgeOperation,
+    #[serde(rename = "sessionID")]
     pub session_id: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
