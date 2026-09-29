@@ -207,5 +207,21 @@ mod tests {
             .expect("Swift engine bridge request failed");
 
         assert_eq!(response, request);
+
+        let conversion_request =
+            r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#.to_string();
+        let conversion_response = engine
+            .handle(conversion_request.clone())
+            .expect("Swift dictionary conversion failed");
+
+        assert_ne!(conversion_response, conversion_request);
+        assert!(
+            conversion_response.contains(r#""candidates":["#),
+            "conversion response did not contain candidates: {conversion_response}"
+        );
+        assert!(
+            !conversion_response.contains(r#""candidates":[]"#),
+            "dictionary conversion returned no candidates"
+        );
     }
 }
