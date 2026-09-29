@@ -41,6 +41,15 @@ impl TextService {
     pub fn advise_text_layout_sink(&self, doc_mgr: ITfDocumentMgr) -> Result<()> {
         unsafe {
             let context = doc_mgr.GetTop()?;
+
+            {
+                let mut contexts = self.contexts.borrow_mut();
+                contexts.register(&context);
+                if let Some(state) = contexts.find(&context) {
+                    state.unadvise_text_layout_sink()?;
+                }
+            }
+
             let this_layout_sink = self.this::<ITfTextLayoutSink>()?;
             let cookie = context
                 .cast::<ITfSource>()?
