@@ -102,7 +102,7 @@ impl<'a> ContextEditor<'a> {
         }
     }
 
-    #[macros::anyhow]
+    #[macros::anyhow(fail_with = E_FAIL)]
     pub fn get_surrounding_text(&self, max_utf16_units: i32) -> Result<(String, String)> {
         let Some(selection) = self.get_selection_range()? else {
             return Ok((String::new(), String::new()));
