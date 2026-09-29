@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   rust-core:
+    if: github.ref != 'refs/heads/feature/native-host'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,3 +85,19 @@ jobs:
       - name: Run Swift DLL roundtrip
         timeout-minutes: 8
         run: cargo test -p conversion-server swift_engine_dll_roundtrip -- --ignored --nocapture
+
+
+  native-host:
+    if: github.ref == 'refs/heads/feature/native-host'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check host formatting
+        run: rustfmt --edition 2021 --check src/azookey-host/src/main.rs
+
+      - name: Test native host
+        run: cargo test -p azookey-host
+
+      - name: Check native host
+        run: cargo check -p azookey-host
