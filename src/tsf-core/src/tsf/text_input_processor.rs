@@ -161,9 +161,13 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             }
         }
 
-        // clear all contexts (Drop handles sink cleanup automatically)
+        // Close shared-engine sessions before dropping contexts. The close calls
+        // are best-effort and run off the COM teardown path.
         tracing::debug!("DropContexts");
-        self.contexts.borrow_mut().clear();
+        let session_ids = self.contexts.borrow_mut().drain_open_engine_session_ids();
+        for session_id in session_ids {
+            crate::client::close_session_best_effort(session_id);
+        }
 
         // clear display attribute
         self.display_attribute_atom.set(HashMap::new());
