@@ -2,7 +2,13 @@ syntax = "proto3";
 package conversion;
 
 service ConversionService {
+  // Temporary compatibility endpoint used by the current rewrite prototype.
   rpc Convert(ConvertRequest) returns (ConvertResponse);
+
+  // Versioned transport for the shared azooKey Desktop engine.
+  // The payload is UTF-8 JSON owned by the bridge contract rather than protobuf,
+  // so the Swift/Rust boundary can evolve independently from TSF plumbing.
+  rpc Handle(EngineRequest) returns (EngineResponse);
 }
 
 message ConvertRequest {
@@ -11,4 +17,14 @@ message ConvertRequest {
 
 message ConvertResponse {
   string text = 1;
+}
+
+message EngineRequest {
+  uint32 protocol_version = 1;
+  bytes payload = 2;
+}
+
+message EngineResponse {
+  uint32 protocol_version = 1;
+  bytes payload = 2;
 }
