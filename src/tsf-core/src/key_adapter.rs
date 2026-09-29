@@ -46,6 +46,19 @@ pub fn core_key_code_from_vk(vk: u16) -> u16 {
     }
 }
 
+
+pub fn ascii_characters_from_vk(vk: u16, shift: bool) -> Option<String> {
+    match vk {
+        0x41..=0x5A => {
+            let base = if shift { b'A' } else { b'a' };
+            let offset = (vk - 0x41) as u8;
+            Some(char::from(base + offset).to_string())
+        }
+        0x30..=0x39 if !shift => Some(char::from(b'0' + (vk - 0x30) as u8).to_string()),
+        _ => None,
+    }
+}
+
 pub const MODIFIER_SHIFT: i32 = 1 << 0;
 pub const MODIFIER_CONTROL: i32 = 1 << 1;
 pub const MODIFIER_ALT: i32 = 1 << 2;
@@ -107,6 +120,22 @@ mod tests {
             let vk = if digit == 0 { 0x30 } else { 0x30 + digit as u16 };
             assert_eq!(core_key_code_from_vk(vk), expected_code);
         }
+    }
+
+    #[test]
+    fn maps_ascii_letters_for_roman_input() {
+        assert_eq!(ascii_characters_from_vk(0x4B, false).as_deref(), Some("k"));
+        assert_eq!(ascii_characters_from_vk(0x59, false).as_deref(), Some("y"));
+        assert_eq!(ascii_characters_from_vk(0x4F, false).as_deref(), Some("o"));
+        assert_eq!(ascii_characters_from_vk(0x55, false).as_deref(), Some("u"));
+        assert_eq!(ascii_characters_from_vk(0x41, true).as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn maps_unshifted_number_row_characters() {
+        assert_eq!(ascii_characters_from_vk(0x30, false).as_deref(), Some("0"));
+        assert_eq!(ascii_characters_from_vk(0x39, false).as_deref(), Some("9"));
+        assert_eq!(ascii_characters_from_vk(0x31, true), None);
     }
 
     #[test]
