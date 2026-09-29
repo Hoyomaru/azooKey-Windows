@@ -117,11 +117,20 @@ impl TextService_Impl {
         let result_ref = Rc::clone(&result_composition);
 
         request_edit_session(context, tid, move |editor| {
+            let mut composition = existing_composition;
+
+            // A response may commit a prefix while immediately continuing with
+            // a new marked-text composition. End the old composition first so
+            // the committed text cannot be overwritten when the remaining
+            // marked text is applied.
             if !inserted_text.is_empty() {
+                if let Some(current) = composition.take() {
+                    editor.end_composition(&current)?;
+                }
                 editor.insert_text(&inserted_text)?;
             }
 
-            let composition = match existing_composition {
+            let composition = match composition {
                 Some(composition) => composition,
                 None => {
                     let range = editor.get_insertion_range()?;
