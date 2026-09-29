@@ -184,3 +184,29 @@ impl Drop for SwiftEngine {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine_worker::ConversionEngine;
+
+    #[test]
+    #[ignore = "requires AzooKeyDesktopEngine.dll built by the Desktop fork"]
+    fn swift_engine_dll_roundtrip() {
+        let configured_path = std::env::var_os("AZOOKEY_DESKTOP_ENGINE_DLL")
+            .expect("AZOOKEY_DESKTOP_ENGINE_DLL must point to the built Swift DLL");
+        assert!(
+            Path::new(&configured_path).is_file(),
+            "configured Swift engine DLL does not exist"
+        );
+
+        let mut engine = SwiftEngine::load_default().expect("failed to load Swift desktop engine");
+        let request = r#"{"type":"bridge-smoke","text":"かな漢字"}"#.to_string();
+        let response = engine
+            .handle(request.clone())
+            .expect("Swift engine bridge request failed");
+
+        assert_eq!(response, request);
+    }
+}
