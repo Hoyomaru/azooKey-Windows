@@ -100,9 +100,11 @@ unsafe extern "C" fn engine_response_callback(
         Ok(unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec())
     };
 
-    if let Ok(mut guard) = state.result.lock() {
-        *guard = Some(result);
-        state.ready.notify_one();
+    {
+        if let Ok(mut guard) = state.result.lock() {
+            *guard = Some(result);
+            state.ready.notify_one();
+        }
     }
 }
 
