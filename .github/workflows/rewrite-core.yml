@@ -6,6 +6,7 @@ on:
       - feature/desktop-core-integration
       - feature/shared-engine-integration
       - feature/windows-transport-dto
+      - feature/native-host
   pull_request:
     branches:
       - upstream-rewrite
@@ -40,7 +41,11 @@ jobs:
       - name: Check candidate UI
         run: cargo check -p candidate-ui
 
+      - name: Test native host
+        run: cargo test -p azookey-host
+
   swift-dll-smoke:
+    if: github.ref != 'refs/heads/feature/native-host'
     name: Swift DLL roundtrip
     runs-on: windows-2022
     steps:
