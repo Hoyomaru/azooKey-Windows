@@ -189,11 +189,7 @@ impl Drop for SwiftEngine {
 mod tests {
     use super::*;
     use crate::engine_worker::ConversionEngine;
-    use std::{
-        sync::mpsc,
-        thread,
-        time::Duration,
-    };
+    use std::{sync::mpsc, thread, time::Duration};
 
     fn expect_stage(
         receiver: &mpsc::Receiver<Result<&'static str, String>>,
@@ -238,9 +234,7 @@ mod tests {
                     let _ = sender.send(Ok("echo-roundtrip"));
                 }
                 Ok(response) => {
-                    let _ = sender.send(Err(format!(
-                        "echo response mismatch: {response}"
-                    )));
+                    let _ = sender.send(Err(format!("echo response mismatch: {response}")));
                     return;
                 }
                 Err(error) => {
@@ -250,7 +244,8 @@ mod tests {
             }
 
             let conversion_request =
-                r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#.to_string();
+                r#"{"type":"conversion-smoke","text":"へんかん","inputStyle":"direct"}"#
+                    .to_string();
             let conversion_response = match engine.handle(conversion_request.clone()) {
                 Ok(response) => response,
                 Err(error) => {
@@ -261,7 +256,7 @@ mod tests {
 
             if conversion_response == conversion_request {
                 let _ = sender.send(Err(
-                    "dictionary conversion returned the original request".to_string(),
+                    "dictionary conversion returned the original request".to_string()
                 ));
                 return;
             }
@@ -273,7 +268,7 @@ mod tests {
             }
             if conversion_response.contains(r#""candidates":[]"#) {
                 let _ = sender.send(Err(
-                    "dictionary conversion returned no candidates".to_string(),
+                    "dictionary conversion returned no candidates".to_string()
                 ));
                 return;
             }
@@ -283,10 +278,6 @@ mod tests {
 
         expect_stage(&receiver, "engine-loaded", Duration::from_secs(60));
         expect_stage(&receiver, "echo-roundtrip", Duration::from_secs(30));
-        expect_stage(
-            &receiver,
-            "dictionary-conversion",
-            Duration::from_secs(60),
-        );
+        expect_stage(&receiver, "dictionary-conversion", Duration::from_secs(60));
     }
 }
