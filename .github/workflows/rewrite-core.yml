@@ -45,7 +45,10 @@ jobs:
         with:
           repository: Hoyomaru/azooKey-Desktop
           ref: feature/windows-shared-core
-          path: azookey-desktop
+          path: d
+
+      - name: Enable long Git paths
+        run: git config --global core.longpaths true
 
       - name: Setup Swift 6.2
         uses: compnerd/gha-setup-swift@main
@@ -54,12 +57,12 @@ jobs:
           tag: 6.2-RELEASE
 
       - name: Build Swift desktop engine DLL
-        run: swift build --package-path azookey-desktop/Core --product AzooKeyDesktopEngine
+        run: swift build --package-path d/Core --product AzooKeyDesktopEngine
 
       - name: Locate Swift desktop engine DLL
         shell: pwsh
         run: |
-          $dll = Get-ChildItem azookey-desktop\Core\.build -Recurse -Filter AzooKeyDesktopEngine.dll | Select-Object -First 1
+          $dll = Get-ChildItem d\Core\.build -Recurse -Filter AzooKeyDesktopEngine.dll | Select-Object -First 1
           if (-not $dll) { throw "AzooKeyDesktopEngine.dll was not produced" }
           "AZOOKEY_DESKTOP_ENGINE_DLL=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
