@@ -1,6 +1,8 @@
-use std::cell::Cell;
-
-use std::collections::HashMap;
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use anyhow::Result;
 use windows::{
@@ -8,11 +10,16 @@ use windows::{
     Win32::UI::TextServices::{ITfComposition, ITfContext, ITfSource},
 };
 
+static NEXT_ENGINE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
 pub struct ContextState {
     pub context: ITfContext,
     pub composition: Cell<Option<ITfComposition>>,
     pub text_edit_sink_cookie: Cell<Option<u32>>,
     pub text_layout_sink_cookie: Cell<Option<u32>>,
+    engine_session_id: String,
+    next_engine_event_id: Cell<u64>,
+    engine_session_open: Cell<bool>,
 }
 
 impl ContextState {
@@ -22,6 +29,29 @@ impl ContextState {
 
     pub fn take_composition(&self) -> Option<ITfComposition> {
         self.composition.take()
+    }
+
+    pub fn engine_session_id(&self) -> &str {
+        &self.engine_session_id
+    }
+
+    pub fn next_engine_event_id(&self) -> u64 {
+        let next = self.next_engine_event_id.get().wrapping_add(1);
+        self.next_engine_event_id.set(next);
+        next
+    }
+
+    pub fn is_engine_session_open(&self) -> bool {
+        self.engine_session_open.get()
+    }
+
+    pub fn mark_engine_session_open(&self) {
+        self.engine_session_open.set(true);
+    }
+
+    pub fn mark_engine_session_closed(&self) {
+        self.engine_session_open.set(false);
+        self.next_engine_event_id.set(0);
     }
 
     pub fn unadvise_text_layout_sink(&self) -> Result<()> {
@@ -67,6 +97,11 @@ impl ContextManager {
 
     pub fn register(&mut self, context: &ITfContext) {
         let key = Self::key(context);
+        if self.registry.contains_key(&key) {
+            return;
+        }
+
+        let sequence = NEXT_ENGINE_SESSION_ID.fetch_add(1, Ordering::Relaxed);
         self.registry.insert(
             key,
             ContextState {
@@ -74,6 +109,9 @@ impl ContextManager {
                 composition: Cell::new(None),
                 text_edit_sink_cookie: Cell::new(None),
                 text_layout_sink_cookie: Cell::new(None),
+                engine_session_id: format!("win-{}-{sequence}", std::process::id()),
+                next_engine_event_id: Cell::new(0),
+                engine_session_open: Cell::new(false),
             },
         );
     }
@@ -97,5 +135,21 @@ impl ContextManager {
 
     pub fn clear(&mut self) {
         self.registry.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_session_ids_are_monotonic_and_process_scoped() {
+        let first = NEXT_ENGINE_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+        let second = NEXT_ENGINE_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(second, first + 1);
+
+        let session_id = format!("win-{}-{first}", std::process::id());
+        assert!(session_id.starts_with("win-"));
+        assert!(session_id.ends_with(&first.to_string()));
     }
 }
