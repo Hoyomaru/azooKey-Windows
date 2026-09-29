@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package window;
+
+message Empty {}
+
+message WindowPosition {
+  int32 top = 1;
+  int32 left = 2;
+  int32 bottom = 3;
+  int32 right = 4;
+}
+
+message SetPositionRequest {
+  WindowPosition position = 1;
+}
+
+message CandidateItem {
+  string text = 1;
+  string annotation = 2;
+}
+
+message SetCandidatesRequest {
+  repeated CandidateItem candidates = 1;
+}
+
+message SetSelectionRequest {
+  int32 index = 1;
+}
+
+service WindowService {
+  rpc Show(Empty) returns (Empty);
+  rpc Hide(Empty) returns (Empty);
+  rpc SetPosition(SetPositionRequest) returns (Empty);
+  rpc SetCandidates(SetCandidatesRequest) returns (Empty);
+  rpc SetSelection(SetSelectionRequest) returns (Empty);
+}
