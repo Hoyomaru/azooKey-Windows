@@ -57,7 +57,7 @@ jobs:
           tag: 6.2-RELEASE
 
       - name: Build Swift desktop engine DLL
-        run: swift build --package-path d/Core --product AzooKeyDesktopEngine
+        run: swift build -c release --package-path d/Core --product AzooKeyDesktopEngine
 
       - name: Locate Swift desktop engine DLL
         shell: pwsh
