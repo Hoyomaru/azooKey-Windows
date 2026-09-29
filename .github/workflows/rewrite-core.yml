@@ -28,12 +28,17 @@ jobs:
         run: |
           rustfmt --edition 2021 --config skip_children=true --check src/conversion-server/src/main.rs
           rustfmt --edition 2021 --check src/conversion-server/src/engine_worker.rs src/conversion-server/src/swift_engine.rs
+          rustfmt --edition 2021 --config skip_children=true --check src/candidate-ui/src/main.rs
+          rustfmt --edition 2021 --check src/candidate-ui/src/candidate.rs src/candidate-ui/src/pipe_stream.rs src/candidate-ui/src/utils.rs
 
       - name: Test conversion server
         run: cargo test -p conversion-server
 
       - name: Check TSF core
         run: cargo check -p tsf-core
+
+      - name: Check candidate UI
+        run: cargo check -p candidate-ui
 
   swift-dll-smoke:
     name: Swift DLL roundtrip
