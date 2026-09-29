@@ -2,6 +2,7 @@ mod client;
 mod engine;
 mod extension;
 mod globals;
+mod key_adapter;
 mod register;
 mod trace;
 mod tsf;
