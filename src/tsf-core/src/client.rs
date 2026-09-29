@@ -41,19 +41,19 @@ pub fn convert(text: &str) -> String {
 
 pub fn handle_engine_json(payload: &str) -> Result<String, String> {
     let payload = payload.to_string();
-    get_runtime()
-        .block_on(async move {
-            let response = do_handle_engine(payload.into_bytes()).await?;
-            String::from_utf8(response)
-                .map_err(|error| format!("engine response was not UTF-8: {error}"))
-        })
-        .map_err(|error: Box<dyn std::error::Error + Send + Sync>| error.to_string())
+    get_runtime().block_on(async move {
+        let response = do_handle_engine(payload.into_bytes())
+            .await
+            .map_err(|error| error.to_string())?;
+        String::from_utf8(response)
+            .map_err(|error| format!("engine response was not UTF-8: {error}"))
+    })
 }
 
 async fn connect_channel(
 ) -> Result<tonic::transport::Channel, Box<dyn std::error::Error + Send + Sync>> {
-    let connect = Endpoint::try_from(DUMMY_URI)?
-        .connect_with_connector(service_fn(|_| async {
+    let endpoint = Endpoint::try_from(DUMMY_URI)?;
+    let connect = endpoint.connect_with_connector(service_fn(|_| async {
             let started = time::Instant::now();
             loop {
                 match ClientOptions::new().open(PIPE_NAME) {
