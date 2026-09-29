@@ -53,6 +53,7 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
             }
 
             self.contexts.borrow_mut().unregister(ctx)?;
+            crate::ui_client::hide_best_effort();
         }
         Ok(())
     }
