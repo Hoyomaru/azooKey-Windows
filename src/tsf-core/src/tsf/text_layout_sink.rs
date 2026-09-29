@@ -16,10 +16,23 @@ impl ITfTextLayoutSink_Impl for TextService_Impl {
     #[macros::anyhow]
     fn OnLayoutChange(
         &self,
-        _pic: Option<&windows::Win32::UI::TextServices::ITfContext>,
+        pic: Option<&windows::Win32::UI::TextServices::ITfContext>,
         _lcode: TfLayoutCode,
         _pview: Option<&ITfContextView>,
     ) -> Result<()> {
+        let Some(context) = pic else {
+            return Ok(());
+        };
+        let tid = self.tid.get();
+        if tid == 0 {
+            return Ok(());
+        }
+
+        if let Ok((_, _, Some(caret_rect))) =
+            super::edit_session::read_surrounding_text(context, tid, 0)
+        {
+            crate::ui_client::publish_position_best_effort(caret_rect);
+        }
         Ok(())
     }
 }
