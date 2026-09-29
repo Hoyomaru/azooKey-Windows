@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     io,
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -19,7 +19,7 @@ use tokio::{
     runtime::Runtime,
     time,
 };
-use tonic::transport::Endpoint;
+use tonic::transport::{Channel, Endpoint};
 use tower::service_fn;
 use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
@@ -32,11 +32,36 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static CHANNEL: OnceLock<Mutex<Option<Channel>>> = OnceLock::new();
 
 type ClientError = Box<dyn Error + Send + Sync>;
 
 fn get_runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create tokio runtime"))
+}
+
+fn channel_cache() -> &'static Mutex<Option<Channel>> {
+    CHANNEL.get_or_init(|| Mutex::new(None))
+}
+
+fn cached_channel() -> Result<Option<Channel>, ClientError> {
+    channel_cache()
+        .lock()
+        .map(|channel| channel.clone())
+        .map_err(|_| io::Error::other("conversion channel cache poisoned").into())
+}
+
+fn store_channel(channel: Channel) -> Result<(), ClientError> {
+    *channel_cache()
+        .lock()
+        .map_err(|_| io::Error::other("conversion channel cache poisoned"))? = Some(channel);
+    Ok(())
+}
+
+fn invalidate_channel() {
+    if let Ok(mut channel) = channel_cache().lock() {
+        *channel = None;
+    }
 }
 
 /// Temporary compatibility endpoint used by the early rewrite prototype.
@@ -88,37 +113,51 @@ pub fn close_session_best_effort(session_id: String) {
         });
 }
 
-async fn connect_client() -> Result<ConversionServiceClient<tonic::transport::Channel>, ClientError> {
-    let channel = time::timeout(
-        CONNECT_TIMEOUT,
-        Endpoint::try_from(DUMMY_URI)?.connect_with_connector(service_fn(|_| async {
-            let started = Instant::now();
-            loop {
-                match ClientOptions::new().open(PIPE_NAME) {
-                    Ok(client) => return Ok::<_, io::Error>(TokioIo::new(client)),
-                    Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as i32) => {
-                        if started.elapsed() >= PIPE_OPEN_TIMEOUT {
-                            return Err(io::Error::new(
-                                io::ErrorKind::TimedOut,
-                                "azooKey conversion pipe remained busy",
-                            ));
-                        }
-                        time::sleep(Duration::from_millis(10)).await;
+async fn connect_channel() -> Result<Channel, ClientError> {
+    let endpoint = Endpoint::try_from(DUMMY_URI)?;
+    let connect = endpoint.connect_with_connector(service_fn(|_| async {
+        let started = Instant::now();
+        loop {
+            match ClientOptions::new().open(PIPE_NAME) {
+                Ok(client) => return Ok::<_, io::Error>(TokioIo::new(client)),
+                Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as i32) => {
+                    if started.elapsed() >= PIPE_OPEN_TIMEOUT {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "azooKey conversion pipe remained busy",
+                        ));
                     }
-                    Err(error) => return Err(error),
+                    time::sleep(Duration::from_millis(10)).await;
                 }
+                Err(error) => return Err(error),
             }
-        })),
-    )
-    .await
-    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "conversion server connect timed out"))??;
+        }
+    }));
 
-    Ok(ConversionServiceClient::new(channel))
+    time::timeout(CONNECT_TIMEOUT, connect)
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "conversion server connect timed out",
+            )
+        })?
+        .map_err(Into::into)
+}
+
+async fn get_channel() -> Result<Channel, ClientError> {
+    if let Some(channel) = cached_channel()? {
+        return Ok(channel);
+    }
+
+    let channel = connect_channel().await?;
+    store_channel(channel.clone())?;
+    Ok(channel)
 }
 
 async fn do_handle(payload: Vec<u8>) -> Result<Vec<u8>, ClientError> {
-    let mut client = connect_client().await?;
-    let response = time::timeout(
+    let mut client = ConversionServiceClient::new(get_channel().await?);
+    let response = match time::timeout(
         REQUEST_TIMEOUT,
         client.handle(EngineRequest {
             protocol_version: ENGINE_RPC_PROTOCOL_VERSION,
@@ -126,8 +165,20 @@ async fn do_handle(payload: Vec<u8>) -> Result<Vec<u8>, ClientError> {
         }),
     )
     .await
-    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "conversion engine request timed out"))??
-    .into_inner();
+    {
+        Ok(Ok(response)) => response.into_inner(),
+        Ok(Err(error)) => {
+            invalidate_channel();
+            return Err(error.into());
+        }
+        Err(_) => {
+            invalidate_channel();
+            return Err(
+                io::Error::new(io::ErrorKind::TimedOut, "conversion engine request timed out")
+                    .into(),
+            );
+        }
+    };
 
     if response.protocol_version != ENGINE_RPC_PROTOCOL_VERSION {
         return Err(io::Error::new(
@@ -144,16 +195,28 @@ async fn do_handle(payload: Vec<u8>) -> Result<Vec<u8>, ClientError> {
 }
 
 async fn do_convert(text: &str) -> Result<String, ClientError> {
-    let mut client = connect_client().await?;
-    let response = time::timeout(
+    let mut client = ConversionServiceClient::new(get_channel().await?);
+    let response = match time::timeout(
         REQUEST_TIMEOUT,
         client.convert(ConvertRequest {
             text: text.to_string(),
         }),
     )
     .await
-    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "compat conversion request timed out"))??
-    .into_inner();
+    {
+        Ok(Ok(response)) => response.into_inner(),
+        Ok(Err(error)) => {
+            invalidate_channel();
+            return Err(error.into());
+        }
+        Err(_) => {
+            invalidate_channel();
+            return Err(
+                io::Error::new(io::ErrorKind::TimedOut, "compat conversion request timed out")
+                    .into(),
+            );
+        }
+    };
 
     Ok(response.text)
 }
