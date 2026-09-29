@@ -7,13 +7,19 @@ use std::{
 
 use crate::engine_worker::ConversionEngine;
 
-const ENGINE_ABI_VERSION: u32 = 1;
+const ENGINE_ABI_VERSION: u32 = 2;
 const DEFAULT_ENGINE_DLL: &str = "AzooKeyDesktopEngine.dll";
 
 type AbiVersionFn = unsafe extern "C" fn() -> u32;
 type CreateFn = unsafe extern "C" fn(*const u8, u32) -> *mut c_void;
-type HandleFn = unsafe extern "C" fn(*mut c_void, *const u8, u32, *mut *mut u8, *mut u32) -> i32;
-type FreeFn = unsafe extern "C" fn(*mut u8, u32);
+type ResponseCallback = unsafe extern "C" fn(*mut c_void, i32, *const u8, u32);
+type HandleAsyncFn = unsafe extern "C" fn(
+    *mut c_void,
+    *const u8,
+    u32,
+    Option<ResponseCallback>,
+    *mut c_void,
+);
 type DestroyFn = unsafe extern "C" fn(*mut c_void);
 
 #[link(name = "kernel32")]
@@ -65,8 +71,7 @@ impl DynamicLibrary {
 pub struct SwiftEngine {
     _library: DynamicLibrary,
     context: *mut c_void,
-    handle: HandleFn,
-    free: FreeFn,
+    handle_async: HandleAsyncFn,
     destroy: DestroyFn,
 }
 
@@ -97,10 +102,9 @@ impl SwiftEngine {
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_abi_version\0")?) };
         let create: CreateFn =
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_create\0")?) };
-        let handle: HandleFn =
-            unsafe { std::mem::transmute(library.symbol(b"azookey_engine_handle\0")?) };
-        let free: FreeFn =
-            unsafe { std::mem::transmute(library.symbol(b"azookey_engine_free\0")?) };
+        let handle_async: HandleAsyncFn = unsafe {
+            std::mem::transmute(library.symbol(b"azookey_engine_handle_async\0")?)
+        };
         let destroy: DestroyFn =
             unsafe { std::mem::transmute(library.symbol(b"azookey_engine_destroy\0")?) };
 
@@ -111,7 +115,7 @@ impl SwiftEngine {
             ));
         }
 
-        let configuration = br#"{"protocolVersion":1}"#;
+        let configuration = br#"{"protocolVersion":2}"#;
         let context = unsafe { create(configuration.as_ptr(), configuration.len() as u32) };
         if context.is_null() {
             return Err("desktop engine initialization failed".into());
@@ -120,8 +124,7 @@ impl SwiftEngine {
         Ok(Self {
             _library: library,
             context,
-            handle,
-            free,
+            handle_async,
             destroy,
         })
     }
@@ -133,34 +136,56 @@ impl ConversionEngine for SwiftEngine {
             return Err("engine request exceeds 4 GiB ABI limit".into());
         }
 
-        let mut response_ptr: *mut u8 = ptr::null_mut();
-        let mut response_len = 0_u32;
-        let status = unsafe {
-            (self.handle)(
+        type CallbackResult = Result<Vec<u8>, String>;
+        let (sender, receiver) = std::sync::mpsc::channel::<CallbackResult>();
+        let sender = Box::new(sender);
+        let user_data = Box::into_raw(sender).cast::<c_void>();
+
+        unsafe extern "C" fn response_callback(
+            user_data: *mut c_void,
+            status: i32,
+            response_ptr: *const u8,
+            response_len: u32,
+        ) {
+            if user_data.is_null() {
+                return;
+            }
+
+            let sender = unsafe {
+                Box::from_raw(
+                    user_data.cast::<std::sync::mpsc::Sender<Result<Vec<u8>, String>>>()
+                )
+            };
+
+            let result = if status != 0 {
+                Err(format!("desktop engine returned status {status}"))
+            } else if response_len == 0 {
+                Ok(Vec::new())
+            } else if response_ptr.is_null() {
+                Err("desktop engine returned a null response buffer".into())
+            } else {
+                Ok(
+                    unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }
+                        .to_vec()
+                )
+            };
+
+            let _ = sender.send(result);
+        }
+
+        unsafe {
+            (self.handle_async)(
                 self.context,
                 request.as_ptr(),
                 request.len() as u32,
-                &mut response_ptr,
-                &mut response_len,
-            )
-        };
-
-        if status != 0 {
-            return Err(format!("desktop engine returned status {status}"));
+                Some(response_callback),
+                user_data,
+            );
         }
 
-        if response_len == 0 {
-            return Ok(String::new());
-        }
-        if response_ptr.is_null() {
-            return Err("desktop engine returned a null response buffer".into());
-        }
-
-        let response =
-            unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec();
-        unsafe {
-            (self.free)(response_ptr, response_len);
-        }
+        let response = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| format!("desktop engine callback timed out: {error}"))??;
 
         String::from_utf8(response)
             .map_err(|error| format!("desktop engine returned invalid UTF-8: {error}"))
