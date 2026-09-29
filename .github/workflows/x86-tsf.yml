@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/x86-tsf-ci
+      - feature/windows-mvp-integration
   workflow_dispatch:
 
 concurrency:
