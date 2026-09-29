@@ -100,12 +100,13 @@ unsafe extern "C" fn engine_response_callback(
         Ok(unsafe { slice::from_raw_parts(response_ptr, response_len as usize) }.to_vec())
     };
 
-    {
-        if let Ok(mut guard) = state.result.lock() {
-            *guard = Some(result);
-            state.ready.notify_one();
-        }
-    }
+    let mut guard = match state.result.lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+    *guard = Some(result);
+    state.ready.notify_one();
+    drop(guard);
 }
 
 pub struct SwiftEngine {
