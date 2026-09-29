@@ -14,7 +14,7 @@ use tonic::transport::server::Connected;
 use windows::{
     core::w,
     Win32::{
-        Foundation::{HLOCAL, LocalFree},
+        Foundation::{LocalFree, HLOCAL},
         Security::{
             Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW,
             PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
@@ -92,17 +92,11 @@ impl AsyncWrite for PipeConnection {
         Pin::new(&mut self.inner).poll_write(cx, buffer)
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
