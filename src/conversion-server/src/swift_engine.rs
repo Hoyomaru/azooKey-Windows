@@ -20,7 +20,6 @@ type DestroyFn = unsafe extern "C" fn(*mut c_void);
 extern "system" {
     fn LoadLibraryW(file_name: *const u16) -> *mut c_void;
     fn GetProcAddress(module: *mut c_void, proc_name: *const u8) -> *mut c_void;
-    fn FreeLibrary(module: *mut c_void) -> i32;
 }
 
 struct DynamicLibrary {
@@ -59,16 +58,10 @@ impl DynamicLibrary {
     }
 }
 
-impl Drop for DynamicLibrary {
-    fn drop(&mut self) {
-        if !self.module.is_null() {
-            unsafe {
-                let _ = FreeLibrary(self.module);
-            }
-        }
-    }
-}
-
+// Swift's Windows runtime is not safe to unload from an arbitrary worker thread.
+// The conversion server owns exactly one engine DLL for its whole process lifetime,
+// so intentionally keep the module loaded and let Windows release it at process exit.
+// Calling FreeLibrary here can deadlock during Swift runtime teardown.
 pub struct SwiftEngine {
     _library: DynamicLibrary,
     context: *mut c_void,
