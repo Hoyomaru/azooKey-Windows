@@ -1,4 +1,8 @@
-use std::{cell::RefCell, mem::ManuallyDrop};
+use std::{
+    cell::RefCell,
+    mem::ManuallyDrop,
+    rc::Rc,
+};
 
 use anyhow::Result;
 use windows::{
@@ -8,8 +12,8 @@ use windows::{
         UI::TextServices::{
             ITfComposition, ITfCompositionSink, ITfContext, ITfContextComposition, ITfEditSession,
             ITfEditSession_Impl, ITfInsertAtSelection, ITfRange, GUID_PROP_ATTRIBUTE, TF_AE_END,
-            TF_ANCHOR_END, TF_ANCHOR_START, TF_ES_READWRITE, TF_IAS_QUERYONLY, TF_SELECTION,
-            TF_SELECTIONSTYLE,
+            TF_ANCHOR_END, TF_ANCHOR_START, TF_ES_READ, TF_ES_READWRITE, TF_ES_SYNC,
+            TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE, TF_TF_MOVESTART,
         },
     },
 };
@@ -95,6 +99,39 @@ impl<'a> ContextEditor<'a> {
             let range = std::mem::ManuallyDrop::into_inner(selection_item.range);
 
             Ok(range)
+        }
+    }
+
+    #[macros::anyhow]
+    pub fn get_surrounding_text(&self, max_utf16_units: i32) -> Result<(String, String)> {
+        let Some(selection) = self.get_selection_range()? else {
+            return Ok((String::new(), String::new()));
+        };
+
+        unsafe {
+            let left_range = selection.Clone()?;
+            left_range.Collapse(self.ec, TF_ANCHOR_START)?;
+            let mut shifted = 0_i32;
+            left_range.ShiftStart(
+                self.ec,
+                -max_utf16_units.max(0),
+                &mut shifted,
+                std::ptr::null(),
+            )?;
+            let left = read_range_text(&left_range, self.ec, max_utf16_units)?;
+
+            let right_range = selection.Clone()?;
+            right_range.Collapse(self.ec, TF_ANCHOR_END)?;
+            shifted = 0;
+            right_range.ShiftEnd(
+                self.ec,
+                max_utf16_units.max(0),
+                &mut shifted,
+                std::ptr::null(),
+            )?;
+            let right = read_range_text(&right_range, self.ec, max_utf16_units)?;
+
+            Ok((left, right))
         }
     }
 
@@ -198,10 +235,59 @@ impl ITfEditSession_Impl for EditSession_Impl {
     fn DoEditSession(&self, ec: u32) -> Result<()> {
         if let Some(callback) = self.callback.borrow_mut().take() {
             let editor = ContextEditor::new(&self.context, ec);
-            let _ = callback(&editor);
+            callback(&editor)?;
         }
         Ok(())
     }
+}
+
+fn read_range_text(range: &ITfRange, ec: u32, max_utf16_units: i32) -> Result<String> {
+    if max_utf16_units <= 0 {
+        return Ok(String::new());
+    }
+
+    let mut buffer = vec![0_u16; max_utf16_units as usize];
+    let mut fetched = 0_u32;
+    unsafe {
+        range.GetText(ec, TF_TF_MOVESTART, &mut buffer, &mut fetched)?;
+    }
+    buffer.truncate(fetched as usize);
+    Ok(String::from_utf16_lossy(&buffer))
+}
+
+pub fn read_surrounding_text(
+    context: &ITfContext,
+    tid: u32,
+    max_utf16_units: i32,
+) -> Result<(String, String)> {
+    let result: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
+    let result_ref = Rc::clone(&result);
+
+    request_read_edit_session(context, tid, move |editor| {
+        *result_ref.borrow_mut() = Some(editor.get_surrounding_text(max_utf16_units)?);
+        Ok(())
+    })?;
+
+    result
+        .borrow_mut()
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("read EditSession did not run synchronously"))
+}
+
+pub fn request_read_edit_session<F>(context: &ITfContext, tid: u32, callback: F) -> Result<()>
+where
+    F: FnOnce(&ContextEditor) -> Result<()> + 'static,
+{
+    let session = EditSession::new(context, callback);
+    let session_interface: ITfEditSession = session.into();
+    let flags = TF_ES_SYNC | TF_ES_READ;
+    unsafe {
+        let hr = context.RequestEditSession(tid, &session_interface, flags)?;
+        if hr.is_err() {
+            return Err(anyhow::anyhow!(hr));
+        }
+    }
+    Ok(())
 }
 
 pub fn request_edit_session<F>(context: &ITfContext, tid: u32, callback: F) -> Result<()>
