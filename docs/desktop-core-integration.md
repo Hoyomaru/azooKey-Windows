@@ -39,3 +39,11 @@ same `SwiftEngine` code used by `conversion-server`.
 The initial dictionary smoke request deliberately disables prediction, emoji
 replacement, and special candidate providers. This isolates the base
 AzooKeyKanaKanjiConverter path before optional desktop features are enabled.
+
+
+## Stable Windows transport
+
+The Windows/Swift boundary uses an explicit versioned JSON DTO rather than
+Swift's synthesized Codable representation for internal enums. Key events,
+snapshots, candidate actions, commits, and session closure use protocol version
+1. CI checks the Rust DTO against the matching Desktop DTO branch.
